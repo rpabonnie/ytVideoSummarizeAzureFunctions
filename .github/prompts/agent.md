@@ -314,10 +314,17 @@ Ensure these are configured:
 - Check `local.settings.json` is properly configured
 - Ensure Azure Functions Core Tools are installed
 - For local development, authenticate with Azure CLI: `az login`
+- **After major code changes:** Clear Python cache to avoid import errors:
+  ```powershell
+  Remove-Item -Path "__pycache__" -Recurse -Force -ErrorAction SilentlyContinue
+  Remove-Item -Path "services\__pycache__" -Recurse -Force -ErrorAction SilentlyContinue
+  Remove-Item -Path "utils\__pycache__" -Recurse -Force -ErrorAction SilentlyContinue
+  ```
 
 ### Import errors
 - Activate virtual environment
 - Reinstall requirements: `pip install -r requirements.txt`
+- Clear `__pycache__` directories after code refactoring
 
 ### Deployment failures
 - Check Azure CLI authentication: `az account show`

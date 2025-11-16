@@ -2,203 +2,140 @@ import azure.functions as func
 import logging
 import json
 import os
-from azure.identity import DefaultAzureCredential
-from azure.keyvault.secrets import SecretClient
-from google import genai
-from google.genai import types
+
+from services.gemini_service import GeminiService
+from services.notion_service import NotionService
+from utils.validators import validate_youtube_url, validate_request_body
+from utils.exceptions import (
+    InvalidYouTubeUrlError,
+    GeminiApiError,
+    NotionApiError,
+    KeyVaultError
+)
 
 app = func.FunctionApp(http_auth_level=func.AuthLevel.ADMIN)
+
+# Initialize services at module level (singleton pattern)
+# This allows reuse across requests and caches Key Vault credentials
+gemini_service: GeminiService | None = None
+notion_service: NotionService | None = None
+
+
+def _initialize_services():
+    """Initialize services with Key Vault URL from environment."""
+    global gemini_service, notion_service
+    
+    if gemini_service is None:
+        key_vault_url = os.environ.get("KEY_VAULT_URL")
+        if not key_vault_url:
+            raise ValueError("KEY_VAULT_URL environment variable not configured")
+        
+        logging.info("Initializing services...")
+        gemini_service = GeminiService(key_vault_url)
+        notion_service = NotionService(key_vault_url)
+        logging.info("Services initialized successfully")
 
 @app.route(route="ytSummarizeToNotion", methods=["POST"])
 def ytSummarizeToNotion(req: func.HttpRequest) -> func.HttpResponse:
     """
     Secure Azure Function that accepts YouTube URLs and generates summaries using Gemini.
+    
+    This function orchestrates the video summarization workflow:
+    1. Validates request and YouTube URL
+    2. Summarizes video using GeminiService
+    3. (Future) Creates Notion page with NotionService
+    4. (Future) Sends email notification
+    
     Requires ADMIN authentication (x-functions-key header).
+    
+    Args:
+        req: HTTP request with JSON body containing 'url' field
+        
+    Returns:
+        HTTP response with JSON summary or error message
     """
     logging.info('YouTube Summarize to Notion function triggered.')
     
     try:
-        # Step 1: Parse and validate the incoming request
+        # Initialize services (lazy initialization on first request)
+        _initialize_services()
+        
+        # Step 1: Parse request body
         try:
             req_body = req.get_json()
-        except ValueError:
-            logging.error("Invalid JSON in request body")
+        except ValueError as e:
+            logging.error(f"Invalid JSON in request body: {str(e)}")
             return func.HttpResponse(
                 json.dumps({"error": "Invalid JSON format"}),
                 status_code=400,
                 mimetype="application/json"
             )
         
-        # Extract YouTube URL from request
-        youtube_url = req_body.get('url')
-        
-        if not youtube_url:
-            logging.error("Missing 'url' field in request body")
-            return func.HttpResponse(
-                json.dumps({"error": "Missing 'url' field in request body"}),
-                status_code=400,
-                mimetype="application/json"
-            )
-        
-        # Basic YouTube URL validation
-        if not ('youtube.com' in youtube_url or 'youtu.be' in youtube_url):
-            logging.error(f"Invalid YouTube URL: {youtube_url}")
-            return func.HttpResponse(
-                json.dumps({"error": "Invalid YouTube URL. Must be a youtube.com or youtu.be link"}),
-                status_code=400,
-                mimetype="application/json"
-            )
-        
-        logging.info(f"Processing YouTube URL: {youtube_url}")
-        
-        # Step 2: Retrieve secrets from Azure Key Vault
-        key_vault_url = os.environ.get("KEY_VAULT_URL")
-        
-        if not key_vault_url:
-            logging.error("KEY_VAULT_URL not configured")
-            return func.HttpResponse(
-                json.dumps({"error": "Server configuration error"}),
-                status_code=500,
-                mimetype="application/json"
-            )
-        
-        logging.info(f"Connecting to Key Vault: {key_vault_url}")
-        
+        # Step 2: Validate request body structure
         try:
-            # Use DefaultAzureCredential for authentication
-            # In local dev, this uses Azure CLI credentials (az login)
-            # In Azure, this uses Managed Identity
-            credential = DefaultAzureCredential()
-            secret_client = SecretClient(vault_url=key_vault_url, credential=credential)
-            
-            # Retrieve Gemini API key from Key Vault
-            logging.info("Retrieving GOOGLE-API-KEY from Key Vault")
-            gemini_key = secret_client.get_secret("GOOGLE-API-KEY").value
-            
-            # Notion key retrieval is commented out for now (step 3b stops before Notion integration)
-            # logging.info("Retrieving NOTION-API-KEY from Key Vault")
-            # notion_key = secret_client.get_secret("NOTION-API-KEY").value
-            
-            logging.info("Successfully retrieved secrets from Key Vault")
-            
-        except Exception as e:
-            logging.error(f"Failed to retrieve secrets from Key Vault: {str(e)}")
+            validate_request_body(req_body)
+        except InvalidYouTubeUrlError as e:
+            logging.error(f"Request validation failed: {e.message}")
             return func.HttpResponse(
-                json.dumps({"error": "Failed to authenticate with Key Vault. Ensure you're logged in with 'az login'"}),
-                status_code=500,
+                json.dumps({"error": e.message}),
+                status_code=e.status_code,
                 mimetype="application/json"
             )
         
-        # Step 3: Configure Gemini API with new SDK
-        client = genai.Client(api_key=gemini_key)
-        
-        # Step 4: Create prompt for Gemini to summarize YouTube video
-        # The prompt instructs Gemini to format output as JSON compatible with Notion
-        prompt = f"""
-        Please analyze this attached YouTube video and provide a comprehensive summary in JSON format.
-        Provide insights I can save on a second brain system in Notion. The Title should be the original video title from YouTube.
-        
-        Return your response as a JSON object with the following structure:
-        {{
-            "title": "The original title from YouTube",
-            "tags": ["tag1", "tag2", "tag3"],
-            "url": "{youtube_url}",
-            "brief_summary": "Concise paragraph summarizing the video content.",
-             "summary_bullets": [
-                "Key point 1",
-                "Key point 2",
-                "Key point 3"
-            ],
-            "tools_and_technologies": [
-                {{
-                    "tool": "Tool name",
-                    "purpose": "What it was used for in the video"
-                }}
-            ]
-        }}
-        
-        Make the summary informative and actionable. Focus on key takeaways, main concepts, and practical applications.
-        """
-        
-        logging.info("Sending request to Gemini API for video analysis")
-        logging.info("Processing ALL videos with LOW media resolution to prevent token limit errors")
-        logging.info("Low resolution: ~100 tokens/second vs default ~300 tokens/second")
-        logging.info("This allows processing videos up to ~3 hours instead of ~1 hour")
-        
+        # Step 3: Validate and sanitize YouTube URL
         try:
-            # Use Gemini's native YouTube video processing with LOW media resolution
-            # This reduces token consumption by ~66% (300 -> 100 tokens/second)
-            # Allows processing videos up to 3 hours on 1M context models
-            response = client.models.generate_content(
-                model='gemini-2.5-pro',
-                contents=[
-                    types.Part(
-                        file_data=types.FileData(file_uri=youtube_url)
-                    ),
-                    types.Part(text=prompt)
-                ],
-                config=types.GenerateContentConfig(
-                    media_resolution=types.MediaResolution.MEDIA_RESOLUTION_LOW
-                )
-            )
-            
-            # Extract the response text
-            summary_text = response.text
-            if not summary_text:
-                raise Exception("Gemini returned empty response")
-            
-            logging.info("Successfully received response from Gemini")
-            
-            # Log the raw summary for verification
-            logging.info(f"Gemini Response:\n{summary_text}")
-            
-            # Try to parse the response as JSON
-            try:
-                # Extract JSON from markdown code blocks if present
-                if '```json' in summary_text:
-                    json_start = summary_text.find('```json') + 7
-                    json_end = summary_text.find('```', json_start)
-                    summary_json = json.loads(summary_text[json_start:json_end].strip())
-                elif '```' in summary_text:
-                    json_start = summary_text.find('```') + 3
-                    json_end = summary_text.find('```', json_start)
-                    summary_json = json.loads(summary_text[json_start:json_end].strip())
-                else:
-                    summary_json = json.loads(summary_text)
-                
-                logging.info("Successfully parsed Gemini response as JSON")
-                
-            except json.JSONDecodeError:
-                logging.warning("Could not parse Gemini response as JSON, returning as text")
-                summary_json = {
-                    "raw_response": summary_text,
-                    "note": "Response was not in expected JSON format"
-                }
-            
-            # Step 5: Return the summary (Notion integration will be added later)
+            youtube_url = req_body.get('url', '')
+            sanitized_url = validate_youtube_url(youtube_url)
+            logging.info(f"Processing YouTube URL: {sanitized_url}")
+        except InvalidYouTubeUrlError as e:
+            logging.error(f"URL validation failed: {e.message}")
             return func.HttpResponse(
-                json.dumps({
-                    "status": "success",
-                    "youtube_url": youtube_url,
-                    "summary": summary_json,
-                    "note": "Video summarized successfully. Notion integration pending."
-                }, indent=2),
-                status_code=200,
+                json.dumps({"error": e.message}),
+                status_code=e.status_code,
                 mimetype="application/json"
             )
+        
+        # Step 4: Summarize video using GeminiService
+        try:
+            if gemini_service is None:
+                raise ValueError("GeminiService not initialized")
             
-        except Exception as e:
-            logging.error(f"Gemini API error: {str(e)}")
+            summary = gemini_service.summarize_video(sanitized_url)
+            logging.info("Video summarized successfully")
+            
+        except KeyVaultError as e:
+            logging.error(f"Key Vault error: {e.message}")
             return func.HttpResponse(
-                json.dumps({"error": f"Failed to process video with Gemini: {str(e)}"}),
-                status_code=500,
+                json.dumps({"error": e.message}),
+                status_code=e.status_code,
                 mimetype="application/json"
             )
-    
-    except Exception as e:
-        logging.error(f"Unexpected error: {str(e)}")
+        except GeminiApiError as e:
+            logging.error(f"Gemini API error: {e.message}")
+            return func.HttpResponse(
+                json.dumps({"error": e.message}),
+                status_code=e.status_code,
+                mimetype="application/json"
+            )
+        
+        # Step 5: Return success response
+        # (Notion integration will be added in future phase)
         return func.HttpResponse(
-            json.dumps({"error": f"Internal server error: {str(e)}"}),
+            json.dumps({
+                "status": "success",
+                "youtube_url": sanitized_url,
+                "summary": summary,
+                "note": "Video summarized successfully. Notion integration pending."
+            }, indent=2),
+            status_code=200,
+            mimetype="application/json"
+        )
+        
+    except Exception as e:
+        # Catch-all for unexpected errors
+        logging.error(f"Unexpected error: {str(e)}", exc_info=True)
+        return func.HttpResponse(
+            json.dumps({"error": "Internal server error. Check function logs for details."}),
             status_code=500,
             mimetype="application/json"
         )
