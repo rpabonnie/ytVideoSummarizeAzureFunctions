@@ -4,7 +4,8 @@ import json
 import os
 from azure.identity import DefaultAzureCredential
 from azure.keyvault.secrets import SecretClient
-import google.generativeai as genai
+from google.generativeai.client import configure
+from google.generativeai.generative_models import GenerativeModel
 
 app = func.FunctionApp(http_auth_level=func.AuthLevel.ADMIN)
 
@@ -89,7 +90,7 @@ def ytSummarizeToNotion(req: func.HttpRequest) -> func.HttpResponse:
             )
         
         # Step 3: Configure Gemini API
-        genai.configure(api_key=gemini_key)
+        configure(api_key=gemini_key)
         
         # Step 4: Create prompt for Gemini to summarize YouTube video
         # The prompt instructs Gemini to format output as JSON compatible with Notion
@@ -124,7 +125,7 @@ def ytSummarizeToNotion(req: func.HttpRequest) -> func.HttpResponse:
         try:
             # Use Gemini's native video processing capability
             # Gemini 2.5 Pro and Flash models can process YouTube URLs directly
-            model = genai.GenerativeModel('gemini-2.5-pro')
+            model = GenerativeModel('gemini-2.5-pro')
             
             # Format the request according to Gemini API specification
             response = model.generate_content([
