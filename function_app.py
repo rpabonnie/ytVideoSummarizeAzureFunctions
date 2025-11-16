@@ -123,18 +123,14 @@ def ytSummarizeToNotion(req: func.HttpRequest) -> func.HttpResponse:
         
         try:
             # Use Gemini's native video processing capability
-            # Gemini 1.5 Pro and Flash models can process YouTube URLs directly
-            model = genai.GenerativeModel('gemini-2.5.flash')
+            # Gemini 2.5 Pro and Flash models can process YouTube URLs directly
+            model = genai.GenerativeModel('gemini-2.5-pro')
             
             # Format the request according to Gemini API specification
-            response = model.generate_content({
-                "contents": [{
-                    "parts": [
-                        {"text": prompt},
-                        {"file_data": {"file_uri": youtube_url}}
-                    ]
-                }]
-            })
+            response = model.generate_content([
+                prompt,
+                {"file_data" :{"file_uri": youtube_url}}
+            ])
             
             # Extract the response text
             summary_text = response.text
