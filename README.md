@@ -5,8 +5,8 @@ An **Azure Functions** application built with **Python** that automatically summ
 ## Overview
 
 This serverless application processes YouTube videos by:
-1. Extracting video transcripts
-2. Generating AI-powered summaries using Google Gemini
+1. Sending YouTube URLs directly to Google Gemini for native video processing
+2. Generating AI-powered summaries using Google Gemini's video analysis capabilities
 3. Creating organized Notion pages with the summary
 4. Sending email notifications when complete
 
@@ -26,33 +26,33 @@ graph TD
     C -->|Valid URL| E[Retrieve Secrets from Azure Key Vault]
     E --> F[Fetch Notion API Key]
     E --> G[Fetch Google Gemini API Key]
-    F --> H[Extract YouTube Video ID]
+    F --> H[Send Video URL to Gemini API]
     G --> H
-    H --> I[Fetch Video Transcript]
-    I -->|Transcript Not Available| J[Return 422 Error]
-    I -->|Transcript Retrieved| K[Generate Summary with Google Gemini]
-    K -->|AI Processing| L[Create Notion Page]
-    L --> M[Format Summary Content]
-    M --> N[Save to Notion Database]
-    N --> O[Send Email Notification]
-    O --> P[Return Success Response]
-    P -->|200 OK| Q[Response with Notion Page URL]
+    H --> I[Gemini Processes Video Natively]
+    I --> J[Generate Summary with AI Analysis]
+    J --> K[Create Notion Page]
+    K --> L[Format Summary Content]
+    L --> M[Save to Notion Database]
+    M --> N[Send Email Notification]
+    N --> O[Return Success Response]
+    O -->|200 OK| P[Response with Notion Page URL]
     
     style A fill:#e1f5ff
     style B fill:#fff4e1
     style E fill:#ffe1f5
-    style K fill:#e1ffe1
-    style L fill:#f5e1ff
-    style O fill:#ffe1e1
-    style Q fill:#e1ffe1
+    style H fill:#e1ffe1
+    style I fill:#e1ffe1
+    style K fill:#f5e1ff
+    style N fill:#ffe1e1
+    style P fill:#e1ffe1
 ```
 
 ---
 
 ## Features
 
-- **🎥 YouTube Integration**: Automatically fetches video transcripts
-- **🤖 AI Summarization**: Uses Google Gemini for intelligent content summarization
+- **🎥 YouTube Integration**: Processes videos directly via URL using Gemini's native video capabilities
+- **🤖 AI Summarization**: Uses Google Gemini for intelligent video analysis and summarization
 - **📝 Notion Integration**: Creates structured pages in your Notion workspace
 - **📧 Email Notifications**: Sends confirmation emails upon successful processing
 - **🔐 Secure**: Secrets managed via Azure Key Vault
@@ -166,8 +166,7 @@ ytVideoSummarizeAzureFunction/
 ├── context/
 │   └── agent.md                # Agent instructions and guidelines
 └── services/                   # Service layer (planned)
-    ├── youtube_service.py      # YouTube API interactions
-    ├── summarizer.py           # AI summarization logic
+    ├── summarizer.py           # AI summarization logic (Using Gemini)
     ├── notion_service.py       # Notion API interactions
     └── email_service.py        # Email notification service
 ```
@@ -231,9 +230,8 @@ az keyvault set-policy `
 
 Key packages (see `requirements.txt` for full list):
 - `azure-functions` - Azure Functions runtime
-- `youtube-transcript-api` - YouTube transcript extraction
-- `google-generativeai` - Google Gemini AI integration
-- `notion-client` - Notion API client
+- `google-genai` - Google Gemini AI integration
+- `notion-client` - Notion API client (planned)
 - `azure-identity` - Azure authentication
 - `azure-keyvault-secrets` - Key Vault integration
 
@@ -244,7 +242,6 @@ Key packages (see `requirements.txt` for full list):
 The function handles various error scenarios:
 - **400**: Invalid YouTube URL
 - **404**: Video not found or private
-- **422**: Transcript unavailable
 - **401**: API authentication issues
 - **500**: Internal processing errors
 - **429**: Rate limit exceeded
@@ -273,7 +270,6 @@ This project is licensed under the MIT License.
 - [Azure Key Vault Documentation](https://learn.microsoft.com/azure/key-vault/)
 - [Notion API Documentation](https://developers.notion.com/)
 - [Google Gemini API Documentation](https://ai.google.dev/docs)
-- [YouTube Transcript API](https://pypi.org/project/youtube-transcript-api/)
 
 ---
 
