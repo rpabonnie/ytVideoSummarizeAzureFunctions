@@ -7,4 +7,8 @@ This package contains service classes that encapsulate business logic:
 - EmailService: Email notifications via SendGrid
 """
 
+from .gemini_service import GeminiService
+from .notion_service import NotionService
+from .email_service import EmailService
+
 __all__ = ['GeminiService', 'NotionService', 'EmailService']

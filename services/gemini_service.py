@@ -9,7 +9,6 @@ This service encapsulates all Google Gemini API interactions including:
 
 import logging
 import json
-import os
 from typing import Optional
 from azure.identity import DefaultAzureCredential
 from azure.keyvault.secrets import SecretClient
@@ -139,7 +138,7 @@ class GeminiService:
             "tags": ["tag1", "tag2", "tag3"],
             "url": "{youtube_url}",
             "brief_summary": "Concise paragraph summarizing the video content.",
-             "summary_bullets": [
+            "summary_bullets": [
                 "Key point 1",
                 "Key point 2",
                 "Key point 3"
