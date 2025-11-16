@@ -4,8 +4,8 @@ import json
 import os
 from azure.identity import DefaultAzureCredential
 from azure.keyvault.secrets import SecretClient
-from google.generativeai.client import configure
-from google.generativeai.generative_models import GenerativeModel
+from google import genai
+from google.genai import types
 
 app = func.FunctionApp(http_auth_level=func.AuthLevel.ADMIN)
 
@@ -89,14 +89,14 @@ def ytSummarizeToNotion(req: func.HttpRequest) -> func.HttpResponse:
                 mimetype="application/json"
             )
         
-        # Step 3: Configure Gemini API
-        configure(api_key=gemini_key)
+        # Step 3: Configure Gemini API with new SDK
+        client = genai.Client(api_key=gemini_key)
         
         # Step 4: Create prompt for Gemini to summarize YouTube video
         # The prompt instructs Gemini to format output as JSON compatible with Notion
         prompt = f"""
         Please analyze this attached YouTube video and provide a comprehensive summary in JSON format.
-        Provide insights I can save on a second brain system in Notion.
+        Provide insights I can save on a second brain system in Notion. The Title should be the original video title from YouTube.
         
         Return your response as a JSON object with the following structure:
         {{
@@ -121,20 +121,32 @@ def ytSummarizeToNotion(req: func.HttpRequest) -> func.HttpResponse:
         """
         
         logging.info("Sending request to Gemini API for video analysis")
+        logging.info("Processing ALL videos with LOW media resolution to prevent token limit errors")
+        logging.info("Low resolution: ~100 tokens/second vs default ~300 tokens/second")
+        logging.info("This allows processing videos up to ~3 hours instead of ~1 hour")
         
         try:
-            # Use Gemini's native video processing capability
-            # Gemini 2.5 Pro and Flash models can process YouTube URLs directly
-            model = GenerativeModel('gemini-2.5-pro')
-            
-            # Format the request according to Gemini API specification
-            response = model.generate_content([
-                prompt,
-                {"file_data" :{"file_uri": youtube_url}}
-            ])
+            # Use Gemini's native YouTube video processing with LOW media resolution
+            # This reduces token consumption by ~66% (300 -> 100 tokens/second)
+            # Allows processing videos up to 3 hours on 1M context models
+            response = client.models.generate_content(
+                model='gemini-2.5-pro',
+                contents=[
+                    types.Part(
+                        file_data=types.FileData(file_uri=youtube_url)
+                    ),
+                    types.Part(text=prompt)
+                ],
+                config=types.GenerateContentConfig(
+                    media_resolution=types.MediaResolution.MEDIA_RESOLUTION_LOW
+                )
+            )
             
             # Extract the response text
             summary_text = response.text
+            if not summary_text:
+                raise Exception("Gemini returned empty response")
+            
             logging.info("Successfully received response from Gemini")
             
             # Log the raw summary for verification
