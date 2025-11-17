@@ -20,6 +20,7 @@ This serverless application processes YouTube videos by:
 
 ```mermaid
 graph TD
+graph TD
     A[HTTP POST Request] -->|YouTube URL| B[ytSummarizeToNotion Function]
     B --> C{Validate Input}
     C -->|Invalid URL| D[Return 400 Error]
@@ -33,9 +34,7 @@ graph TD
     J --> K[Create Notion Page]
     K --> L[Format Summary Content]
     L --> M[Save to Notion Database]
-    M --> N[Send Email Notification]
-    N --> O[Return Success Response]
-    O -->|200 OK| P[Response with Notion Page URL]
+    M --> |200 OK| N[Send Email Notification]
     
     style A fill:#e1f5ff
     style B fill:#fff4e1
@@ -44,7 +43,6 @@ graph TD
     style I fill:#e1ffe1
     style K fill:#f5e1ff
     style N fill:#ffe1e1
-    style P fill:#e1ffe1
 ```
 
 ---
