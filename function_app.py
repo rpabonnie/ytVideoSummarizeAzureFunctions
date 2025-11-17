@@ -9,7 +9,6 @@ from utils.validators import validate_youtube_url, validate_request_body
 from utils.exceptions import (
     InvalidYouTubeUrlError,
     GeminiApiError,
-    NotionApiError,
     KeyVaultError
 )
 

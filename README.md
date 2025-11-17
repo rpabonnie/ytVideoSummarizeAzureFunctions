@@ -77,7 +77,7 @@ graph TD
 ### 1. Clone the Repository
 ```powershell
 git clone https://github.com/rpabonnie/ytVideoSummarizeAzureFunctions.git
-cd ytVideoSummarizeAzureFunction
+cd ytVideoSummarizeAzureFunctions
 ```
 
 ### 2. Create Virtual Environment
@@ -155,20 +155,21 @@ Invoke-RestMethod -Uri "http://localhost:7071/api/ytSummarizeToNotion" `
 ## Project Structure
 
 ```
-ytVideoSummarizeAzureFunction/
+ytVideoSummarizeAzureFunctions/
 ├── function_app.py              # Main Azure Function definitions
 ├── host.json                    # Function host configuration
 ├── local.settings.json          # Local development settings (not committed)
 ├── requirements.txt             # Python dependencies
 ├── README.md                    # This file
-├── QUICKSTART.md               # Quick start guide
-├── TESTING.md                  # Testing documentation
-├── context/
-│   └── agent.md                # Agent instructions and guidelines
-└── services/                   # Service layer (planned)
-    ├── summarizer.py           # AI summarization logic (Using Gemini)
-    ├── notion_service.py       # Notion API interactions
-    └── email_service.py        # Email notification service
+├── services/
+│   ├── gemini_service.py        # AI summarization logic using Google Gemini
+│   ├── notion_service.py        # Notion API interactions (planned)
+│   └── email_service.py         # Email notification service (planned)
+├── utils/
+│   ├── validators.py            # Input validation functions
+│   └── exceptions.py            # Custom exception classes
+└── tests/
+    └── __init__.py              # Test infrastructure (planned)
 ```
 
 ---
