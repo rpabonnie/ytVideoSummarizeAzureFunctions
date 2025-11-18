@@ -46,9 +46,9 @@ ACS Email API (with HTML template)
 
 ## Implementation Steps
 
-### Step 1: Provision Azure Communication Services
+### Step 1: Provision Azure Communication Services (Completed)
 
-#### 1.1 Create Azure Communication Services Resource
+#### 1.1 Create Azure Communication Services Resource (Completed)
 
 **Option A: Azure Portal**
 1. Navigate to Azure Portal → Create a resource
@@ -78,7 +78,7 @@ az communication create `
   --data-location $dataLocation
 ```
 
-#### 1.2 Create Email Communication Services Resource
+#### 1.2 Create Email Communication Services Resource (Completed)
 
 **Option A: Azure Portal**
 1. Navigate to Azure Portal → Create a resource
@@ -103,7 +103,7 @@ az communication email create `
   --data-location $dataLocation
 ```
 
-#### 1.3 Provision Azure-Managed Email Domain (Free, No Verification)
+#### 1.3 Provision Azure-Managed Email Domain (Free, No Verification) (Completed)
 
 **Azure Portal Steps:**
 1. Navigate to your **Email Communication Services** resource (`ytVideoSummarizer-email`)
@@ -118,7 +118,7 @@ az communication email create `
 
 **Note**: For custom domains (e.g., `noreply@yourdomain.com`), see [Custom Domain Setup](https://learn.microsoft.com/en-us/azure/communication-services/quickstarts/email/add-custom-verified-domains) - requires DNS verification.
 
-#### 1.4 Connect Email Domain to Communication Services
+#### 1.4 Connect Email Domain to Communication Services (Completed)
 
 **Azure Portal Steps:**
 1. Navigate to your **Communication Services** resource (`ytVideoSummarizer-acs`)
@@ -131,7 +131,7 @@ az communication email create `
 
 **Verify**: Domain status should show "Connected"
 
-#### 1.5 Get Connection String and Store in Key Vault
+#### 1.5 Get Connection String and Store in Key Vault (Completed)
 
 **Get Connection String:**
 
