@@ -170,6 +170,8 @@ def ytSummarizeToNotion(req: func.HttpRequest) -> func.HttpResponse:
         notion_success = False
         try:
             logging.info("Creating Notion page with summary...")
+            if notion_service is None:
+                raise ValueError("NotionService not initialized")
             notion_url = notion_service.create_page(summary)
             notion_success = True
             logging.info(f"Notion page created successfully: {notion_url}")
