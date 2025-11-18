@@ -9,6 +9,7 @@ from services.gemini_service import GeminiService
 from services.notion_service import NotionService
 from services.email_service import EmailService
 from utils.validators import validate_youtube_url, validate_request_body
+from utils.log_capture import LogCapture, LogCaptureHandler
 from utils.exceptions import (
     InvalidYouTubeUrlError,
     GeminiApiError,
@@ -82,21 +83,34 @@ def _check_rate_limit() -> tuple[bool, int]:
     return True, current_count + 1
 
 
-def _send_failure_email(youtube_url: str, error_message: str):
+def _send_failure_email(
+    youtube_url: str, 
+    error_message: str, 
+    log_capture: LogCapture | None = None,
+    request_body: dict | None = None
+):
     """
-    Send failure notification email.
+    Send failure notification email with comprehensive logs.
     
     Args:
         youtube_url: YouTube URL that failed processing
         error_message: Error description
+        log_capture: LogCapture instance with complete failure logs
+        request_body: Original request body for context
     """
     if email_service:
         try:
+            markdown_report = None
+            if log_capture:
+                markdown_report = log_capture.generate_markdown_report()
+            
             email_service.send_failure_email(
                 youtube_url=youtube_url,
-                error=error_message
+                error=error_message,
+                markdown_report=markdown_report,
+                request_body=request_body
             )
-            logging.info("Failure email notification sent")
+            logging.info("Failure email notification sent with comprehensive logs")
         except Exception as e:
             logging.warning(f"Failed to send failure email (non-fatal): {str(e)}")
 
@@ -120,27 +134,47 @@ def ytSummarizeToNotion(req: func.HttpRequest) -> func.HttpResponse:
     Returns:
         HTTP response with JSON summary or error message
     """
-    logging.info('YouTube Summarize to Notion function triggered.')
+    # Initialize log capture for this request
+    log_capture = LogCapture()
+    
+    # Set up logging handler to capture all logs
+    logger = logging.getLogger()
+    log_handler = LogCaptureHandler(log_capture)
+    log_handler.setLevel(logging.INFO)
+    logger.addHandler(log_handler)
     
     try:
+        logging.info('YouTube Summarize to Notion function triggered.')
+        
         # Initialize services (lazy initialization on first request)
         _initialize_services()
+        
+        # Capture request headers (sanitized)
+        headers_dict = dict(req.headers)
         
         # Step 1: Check rate limit (30 requests per hour)
         is_allowed, request_count = _check_rate_limit()
         if not is_allowed:
             logging.warning(f"Rate limit exceeded: {request_count} requests in the last hour")
             
+            error_msg = f"Rate limit exceeded: {request_count}/{RATE_LIMIT_PER_HOUR} requests in last hour. Please try again later."
+            log_capture.set_error_info(
+                Exception("RateLimitExceeded"),
+                {"requests_in_last_hour": request_count, "limit": RATE_LIMIT_PER_HOUR}
+            )
+            
             # Send failure email
             _send_failure_email(
                 "Unknown URL",
-                f"Rate limit exceeded: {request_count}/{RATE_LIMIT_PER_HOUR} requests in last hour. Please try again later."
+                error_msg,
+                log_capture=log_capture,
+                request_body=None
             )
             
             return func.HttpResponse(
                 json.dumps({
                     "error": "Rate limit exceeded",
-                    "message": f"Maximum {RATE_LIMIT_PER_HOUR} requests per hour allowed. Please try again later.",
+                    "message": error_msg,
                     "requests_in_last_hour": request_count
                 }),
                 status_code=429,
@@ -150,15 +184,20 @@ def ytSummarizeToNotion(req: func.HttpRequest) -> func.HttpResponse:
         logging.info(f"Rate limit check passed: {request_count}/{RATE_LIMIT_PER_HOUR} requests in last hour")
         
         # Step 2: Parse request body
+        req_body = None
         try:
             req_body = req.get_json()
+            log_capture.set_request_data(req_body, headers_dict)
         except ValueError as e:
             logging.error(f"Invalid JSON in request body: {str(e)}")
+            log_capture.set_error_info(e, {"error_type": "InvalidJSON"})
             
             # Send failure email
             _send_failure_email(
                 "N/A - Invalid Request",
-                f"Invalid JSON format in request: {str(e)}"
+                f"Invalid JSON format in request: {str(e)}",
+                log_capture=log_capture,
+                request_body=None
             )
             
             return func.HttpResponse(
@@ -172,11 +211,14 @@ def ytSummarizeToNotion(req: func.HttpRequest) -> func.HttpResponse:
             validate_request_body(req_body)
         except InvalidYouTubeUrlError as e:
             logging.error(f"Request validation failed: {e.message}")
+            log_capture.set_error_info(e, {"error_type": "ValidationError"})
             
             # Send failure email
             _send_failure_email(
                 req_body.get('url', 'Invalid URL') if req_body else 'Invalid URL',
-                f"Request validation failed: {e.message}"
+                f"Request validation failed: {e.message}",
+                log_capture=log_capture,
+                request_body=req_body
             )
             
             return func.HttpResponse(
@@ -186,17 +228,25 @@ def ytSummarizeToNotion(req: func.HttpRequest) -> func.HttpResponse:
             )
         
         # Step 3: Validate and sanitize YouTube URL
+        youtube_url = ""
+        sanitized_url = ""
         try:
             youtube_url = req_body.get('url', '')
             sanitized_url = validate_youtube_url(youtube_url)
             logging.info(f"Processing YouTube URL: {sanitized_url}")
         except InvalidYouTubeUrlError as e:
             logging.error(f"URL validation failed: {e.message}")
+            log_capture.set_error_info(e, {
+                "error_type": "InvalidURL",
+                "provided_url": youtube_url
+            })
             
             # Send failure email
             _send_failure_email(
                 youtube_url,
-                f"Invalid YouTube URL: {e.message}"
+                f"Invalid YouTube URL: {e.message}",
+                log_capture=log_capture,
+                request_body=req_body
             )
             
             return func.HttpResponse(
@@ -206,6 +256,7 @@ def ytSummarizeToNotion(req: func.HttpRequest) -> func.HttpResponse:
             )
         
         # Step 4: Summarize video using GeminiService
+        summary = None
         try:
             if gemini_service is None:
                 raise ValueError("GeminiService not initialized")
@@ -215,11 +266,17 @@ def ytSummarizeToNotion(req: func.HttpRequest) -> func.HttpResponse:
             
         except KeyVaultError as e:
             logging.error(f"Key Vault error: {e.message}")
+            log_capture.set_error_info(e, {
+                "error_type": "KeyVaultError",
+                "video_url": sanitized_url
+            })
             
             # Send failure email
             _send_failure_email(
                 sanitized_url,
-                f"Configuration error (Key Vault): {e.message}"
+                f"Configuration error (Key Vault): {e.message}",
+                log_capture=log_capture,
+                request_body=req_body
             )
             
             return func.HttpResponse(
@@ -229,11 +286,17 @@ def ytSummarizeToNotion(req: func.HttpRequest) -> func.HttpResponse:
             )
         except GeminiApiError as e:
             logging.error(f"Gemini API error: {e.message}")
+            log_capture.set_error_info(e, {
+                "error_type": "GeminiApiError",
+                "video_url": sanitized_url
+            })
             
             # Send failure email
             _send_failure_email(
                 sanitized_url,
-                f"AI summarization failed: {e.message}"
+                f"AI summarization failed: {e.message}",
+                log_capture=log_capture,
+                request_body=req_body
             )
             
             return func.HttpResponse(
@@ -267,11 +330,24 @@ def ytSummarizeToNotion(req: func.HttpRequest) -> func.HttpResponse:
             
         except NotionApiError as e:
             logging.warning(f"Notion integration failed (non-fatal): {e.message}")
+            log_capture.set_error_info(e, {
+                "error_type": "NotionApiError",
+                "video_url": sanitized_url,
+                "partial_success": True
+            })
             # Don't fail the entire request - summary is still valid
         except KeyVaultError as e:
             logging.warning(f"Notion Key Vault error (non-fatal): {e.message}")
+            log_capture.set_error_info(e, {
+                "error_type": "NotionKeyVaultError",
+                "partial_success": True
+            })
         except Exception as e:
             logging.warning(f"Unexpected Notion error (non-fatal): {str(e)}")
+            log_capture.set_error_info(e, {
+                "error_type": "UnexpectedNotionError",
+                "partial_success": True
+            })
         
         # Step 6: Return success response
         response_data = {
@@ -289,7 +365,9 @@ def ytSummarizeToNotion(req: func.HttpRequest) -> func.HttpResponse:
             # Send failure email for partial success
             _send_failure_email(
                 sanitized_url,
-                "Summary generated successfully, but Notion page creation failed. Check Azure Function logs for details."
+                "Summary generated successfully, but Notion page creation failed. Check Azure Function logs for details.",
+                log_capture=log_capture,
+                request_body=req_body
             )
         
         return func.HttpResponse(
@@ -301,12 +379,20 @@ def ytSummarizeToNotion(req: func.HttpRequest) -> func.HttpResponse:
     except Exception as e:
         # Catch-all for unexpected errors
         logging.error(f"Unexpected error: {str(e)}", exc_info=True)
+        log_capture.set_error_info(e, {
+            "error_type": "UnexpectedException",
+            "critical": True
+        })
         
         # Send failure email
-        youtube_url = locals().get('sanitized_url') or (req_body.get('url', 'Unknown') if 'req_body' in locals() else 'Unknown')
+        youtube_url = sanitized_url if 'sanitized_url' in locals() and sanitized_url else (
+            req_body.get('url', 'Unknown') if 'req_body' in locals() and req_body else 'Unknown'
+        )
         _send_failure_email(
             youtube_url,
-            f"Internal server error: {str(e)}"
+            f"Internal server error: {str(e)}",
+            log_capture=log_capture,
+            request_body=req_body if 'req_body' in locals() else None
         )
         
         return func.HttpResponse(
@@ -314,3 +400,6 @@ def ytSummarizeToNotion(req: func.HttpRequest) -> func.HttpResponse:
             status_code=500,
             mimetype="application/json"
         )
+    finally:
+        # Clean up log handler
+        logger.removeHandler(log_handler)
