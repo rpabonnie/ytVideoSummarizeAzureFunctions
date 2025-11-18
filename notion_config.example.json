@@ -1,0 +1,37 @@
+{
+  "database_id": "PASTE_YOUR_DATABASE_ID_HERE",
+  "database_name": "YouTube Summaries",
+  "property_mapping": {
+    "title": ["Title", "Source"],
+    "tags": "Tags",
+    "url": "URL"
+  },
+  "static_properties": {
+    "content_type": {
+      "property_name": "Content Type",
+      "value": "Video"
+    }
+  },
+  "content_sections": {
+    "brief_summary": {
+      "heading": "Overview",
+      "field": "brief_summary"
+    },
+    "summary_bullets": {
+      "heading": "Summary",
+      "field": "summary_bullets"
+    },
+    "tools_and_technologies": {
+      "heading": "Tools & Technologies",
+      "field": "tools_and_technologies"
+    }
+  },
+  "notes": {
+    "setup_instructions": "See NOTION_SETUP.md for configuration steps",
+    "database_id_location": "Copy from Notion database URL: https://notion.so/workspace/{database_id}?v=...",
+    "workspace_name_optional": "Workspace name is not required by the Notion API",
+    "property_mapping_info": "Maps Gemini response fields to Notion database properties. Can be a string or array of strings to map one field to multiple properties (e.g., title to both 'Episode' and 'Source')",
+    "static_properties_info": "Properties with fixed values that are always set (e.g., content_type='Video'). Uses select type by default.",
+    "content_sections_info": "Maps Gemini response fields to Notion page body content with custom headings"
+  }
+}

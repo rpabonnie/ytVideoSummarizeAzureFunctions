@@ -2,6 +2,8 @@ import azure.functions as func
 import logging
 import json
 import os
+from datetime import datetime, timedelta
+from collections import deque
 
 from services.gemini_service import GeminiService
 from services.notion_service import NotionService
@@ -9,6 +11,7 @@ from utils.validators import validate_youtube_url, validate_request_body
 from utils.exceptions import (
     InvalidYouTubeUrlError,
     GeminiApiError,
+    NotionApiError,
     KeyVaultError
 )
 
@@ -18,6 +21,10 @@ app = func.FunctionApp(http_auth_level=func.AuthLevel.ADMIN)
 # This allows reuse across requests and caches Key Vault credentials
 gemini_service: GeminiService | None = None
 notion_service: NotionService | None = None
+
+# Rate limiting configuration (dev/testing phase)
+RATE_LIMIT_PER_HOUR = 30
+request_timestamps = deque()  # Stores timestamps of requests in the last hour
 
 
 def _initialize_services():
@@ -34,6 +41,30 @@ def _initialize_services():
         notion_service = NotionService(key_vault_url)
         logging.info("Services initialized successfully")
 
+
+def _check_rate_limit() -> tuple[bool, int]:
+    """
+    Check if request is within rate limit (30 requests per hour).
+    
+    Returns:
+        Tuple of (is_allowed, requests_in_last_hour)
+    """
+    now = datetime.utcnow()
+    one_hour_ago = now - timedelta(hours=1)
+    
+    # Remove timestamps older than 1 hour
+    while request_timestamps and request_timestamps[0] < one_hour_ago:
+        request_timestamps.popleft()
+    
+    current_count = len(request_timestamps)
+    
+    if current_count >= RATE_LIMIT_PER_HOUR:
+        return False, current_count
+    
+    # Add current request timestamp
+    request_timestamps.append(now)
+    return True, current_count + 1
+
 @app.route(route="ytSummarizeToNotion", methods=["POST"])
 def ytSummarizeToNotion(req: func.HttpRequest) -> func.HttpResponse:
     """
@@ -46,6 +77,7 @@ def ytSummarizeToNotion(req: func.HttpRequest) -> func.HttpResponse:
     4. (Future) Sends email notification
     
     Requires ADMIN authentication (x-functions-key header).
+    Rate limited to 30 requests per hour (dev/testing phase).
     
     Args:
         req: HTTP request with JSON body containing 'url' field
@@ -59,7 +91,23 @@ def ytSummarizeToNotion(req: func.HttpRequest) -> func.HttpResponse:
         # Initialize services (lazy initialization on first request)
         _initialize_services()
         
-        # Step 1: Parse request body
+        # Step 1: Check rate limit (30 requests per hour)
+        is_allowed, request_count = _check_rate_limit()
+        if not is_allowed:
+            logging.warning(f"Rate limit exceeded: {request_count} requests in the last hour")
+            return func.HttpResponse(
+                json.dumps({
+                    "error": "Rate limit exceeded",
+                    "message": f"Maximum {RATE_LIMIT_PER_HOUR} requests per hour allowed. Please try again later.",
+                    "requests_in_last_hour": request_count
+                }),
+                status_code=429,
+                mimetype="application/json"
+            )
+        
+        logging.info(f"Rate limit check passed: {request_count}/{RATE_LIMIT_PER_HOUR} requests in last hour")
+        
+        # Step 2: Parse request body
         try:
             req_body = req.get_json()
         except ValueError as e:
@@ -117,15 +165,39 @@ def ytSummarizeToNotion(req: func.HttpRequest) -> func.HttpResponse:
                 mimetype="application/json"
             )
         
-        # Step 5: Return success response
-        # (Notion integration will be added in future phase)
+        # Step 5: Create Notion page
+        notion_url = None
+        notion_success = False
+        try:
+            logging.info("Creating Notion page with summary...")
+            if notion_service is None:
+                raise ValueError("NotionService not initialized")
+            notion_url = notion_service.create_page(summary)
+            notion_success = True
+            logging.info(f"Notion page created successfully: {notion_url}")
+        except NotionApiError as e:
+            logging.warning(f"Notion integration failed (non-fatal): {e.message}")
+            # Don't fail the entire request - summary is still valid
+        except KeyVaultError as e:
+            logging.warning(f"Notion Key Vault error (non-fatal): {e.message}")
+        except Exception as e:
+            logging.warning(f"Unexpected Notion error (non-fatal): {str(e)}")
+        
+        # Step 6: Return success response
+        response_data = {
+            "status": "success",
+            "youtube_url": sanitized_url,
+            "summary": summary,
+            "notion_url": notion_url,
+            "notion_success": notion_success
+        }
+        
+        # Add note if Notion integration failed
+        if not notion_success:
+            response_data["note"] = "Summary generated but Notion page creation failed. Check logs for details."
+        
         return func.HttpResponse(
-            json.dumps({
-                "status": "success",
-                "youtube_url": sanitized_url,
-                "summary": summary,
-                "note": "Video summarized successfully. Notion integration pending."
-            }, indent=2),
+            json.dumps(response_data, indent=2),
             status_code=200,
             mimetype="application/json"
         )
