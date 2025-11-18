@@ -139,13 +139,14 @@ class NotionService:
         logging.info(f"Loaded Notion config for database: {config.get('database_name', 'Unknown')}")
         return config
     
-    def _build_properties(self, summary_data: dict, property_mapping: dict) -> dict:
+    def _build_properties(self, summary_data: dict, property_mapping: dict, static_properties: dict = None) -> dict:
         """
         Build Notion page properties from Gemini summary data.
         
         Args:
             summary_data: Dict from Gemini (title, tags, url, brief_summary, etc.)
-            property_mapping: Config mapping Gemini fields to Notion properties
+            property_mapping: Config mapping Gemini fields to Notion properties (supports string or list of strings)
+            static_properties: Dict of static property values to always set (e.g., content_type)
         
         Returns:
             dict: Notion API properties object
@@ -153,30 +154,78 @@ class NotionService:
         properties = {}
         
         # Title (required, special "title" type)
+        # Supports mapping to multiple properties (first as title, rest as rich_text)
         if 'title' in summary_data:
             title_value = summary_data['title'] or "Untitled Video"
-            properties[property_mapping.get('title', 'Title')] = {
-                "title": [
-                    {
-                        "type": "text",
-                        "text": {"content": title_value}
+            title_properties = property_mapping.get('title', 'Title')
+            
+            # Normalize to list for uniform processing
+            if isinstance(title_properties, str):
+                title_properties = [title_properties]
+            
+            # First property is the actual Notion title type
+            if title_properties:
+                properties[title_properties[0]] = {
+                    "title": [
+                        {
+                            "type": "text",
+                            "text": {"content": title_value}
+                        }
+                    ]
+                }
+                
+                # Additional properties are rich_text type
+                for prop_name in title_properties[1:]:
+                    properties[prop_name] = {
+                        "rich_text": [
+                            {
+                                "type": "text",
+                                "text": {"content": title_value}
+                            }
+                        ]
                     }
-                ]
-            }
         
         # Tags (multi_select type)
         if 'tags' in summary_data and isinstance(summary_data['tags'], list):
-            properties[property_mapping.get('tags', 'Tags')] = {
-                "multi_select": [
-                    {"name": str(tag)[:100]} for tag in summary_data['tags'] if tag  # Notion tag limit
-                ]
-            }
+            tags_properties = property_mapping.get('tags', 'Tags')
+            
+            # Normalize to list for uniform processing
+            if isinstance(tags_properties, str):
+                tags_properties = [tags_properties]
+            
+            # Apply to all mapped properties
+            for prop_name in tags_properties:
+                properties[prop_name] = {
+                    "multi_select": [
+                        {"name": str(tag)[:100]} for tag in summary_data['tags'] if tag  # Notion tag limit
+                    ]
+                }
         
         # URL (url type)
         if 'url' in summary_data and summary_data['url']:
-            properties[property_mapping.get('url', 'URL')] = {
-                "url": summary_data['url']
-            }
+            url_properties = property_mapping.get('url', 'URL')
+            
+            # Normalize to list for uniform processing
+            if isinstance(url_properties, str):
+                url_properties = [url_properties]
+            
+            # Apply to all mapped properties
+            for prop_name in url_properties:
+                properties[prop_name] = {
+                    "url": summary_data['url']
+                }
+        
+        # Static properties (e.g., content_type with fixed value)
+        if static_properties:
+            for prop_key, prop_config in static_properties.items():
+                property_name = prop_config.get('property_name')
+                property_value = prop_config.get('value')
+                
+                if property_name and property_value:
+                    # Assume select type for static properties (can be extended for other types)
+                    properties[property_name] = {
+                        "select": {"name": str(property_value)}
+                    }
         
         return properties
     
@@ -291,12 +340,13 @@ class NotionService:
             
             database_id = config['database_id']
             property_mapping = config.get('property_mapping', {})
+            static_properties = config.get('static_properties', {})
             content_sections = config.get('content_sections', {})
             
             logging.info(f"Creating Notion page for video: {summary_data.get('title', 'Unknown')}")
             
             # Build Notion API request
-            properties = self._build_properties(summary_data, property_mapping)
+            properties = self._build_properties(summary_data, property_mapping, static_properties)
             children = self._build_content_blocks(summary_data, content_sections)
             
             # Create page (synchronous call)
