@@ -1,26 +1,30 @@
 """
-Email notification service for SendGrid integration.
+Email notification service for Azure Communication Services Email integration.
 
 This service encapsulates email notification logic including:
 - Formatting success and failure emails
-- Integration with Azure Functions SendGrid output binding
+- Integration with Azure Communication Services Email SDK
 - HTML email templates
 """
 
 import logging
+import os
 from typing import Dict, Any
+from azure.communication.email import EmailClient
+from azure.identity import DefaultAzureCredential
 
 
 class EmailService:
-    """Service for sending email notifications via SendGrid."""
+    """Service for sending email notifications via Azure Communication Services Email."""
     
-    def __init__(self, from_email: str, to_email: str):
+    def __init__(self, from_email: str, to_email: str, connection_string: str | None = None):
         """
         Initialize Email service with sender and recipient.
         
         Args:
-            from_email: Sender email address (verified in SendGrid)
+            from_email: Sender email address (verified in ACS)
             to_email: Recipient email address
+            connection_string: ACS connection string (optional, uses env if not provided)
             
         Raises:
             ValueError: If emails are empty or invalid format
@@ -30,28 +34,28 @@ class EmailService:
         
         self.from_email = from_email
         self.to_email = to_email
+        
+        # Initialize EmailClient with connection string
+        conn_str = connection_string or os.environ.get("ACS_CONNECTION_STRING")
+        if not conn_str:
+            raise ValueError("ACS_CONNECTION_STRING not configured")
+        
+        self.email_client = EmailClient.from_connection_string(conn_str)
         logging.info(f"EmailService initialized: {from_email} -> {to_email}")
     
-    def format_success_email(
+    def send_success_email(
         self, 
         youtube_url: str, 
         notion_url: str, 
         summary: dict
-    ) -> Dict[str, Any]:
+    ) -> None:
         """
-        Format success notification email for SendGrid binding.
+        Send success notification email via Azure Communication Services.
         
         Args:
             youtube_url: Original YouTube video URL
             notion_url: Created Notion page URL
             summary: Video summary data from GeminiService
-            
-        Returns:
-            dict: Email data for SendGrid output binding with keys:
-                - personalizations: Recipient list
-                - from: Sender info
-                - subject: Email subject
-                - content: HTML email body
         """
         title = summary.get('title', 'Unknown Video')
         brief = summary.get('brief_summary', 'No summary available')
@@ -80,32 +84,32 @@ class EmailService:
         </html>
         """
         
-        return {
-            "personalizations": [
-                {
-                    "to": [{"email": self.to_email}]
-                }
-            ],
-            "from": {"email": self.from_email},
-            "subject": f"✅ Summary Ready: {title}",
-            "content": [
-                {
-                    "type": "text/html",
-                    "value": html_content
-                }
-            ]
+        message = {
+            "senderAddress": self.from_email,
+            "recipients": {
+                "to": [{"address": self.to_email}]
+            },
+            "content": {
+                "subject": f"✅ Summary Ready: {title}",
+                "html": html_content
+            }
         }
+        
+        try:
+            poller = self.email_client.begin_send(message)
+            result = poller.result()
+            logging.info(f"Success email sent. Message ID: {result['id']}")
+        except Exception as e:
+            logging.error(f"Failed to send success email: {str(e)}")
+            raise
     
-    def format_failure_email(self, youtube_url: str, error: str) -> Dict[str, Any]:
+    def send_failure_email(self, youtube_url: str, error: str) -> None:
         """
-        Format failure notification email for SendGrid binding.
+        Send failure notification email via Azure Communication Services.
         
         Args:
             youtube_url: YouTube video URL that failed
             error: Error message
-            
-        Returns:
-            dict: Email data for SendGrid output binding
         """
         html_content = f"""
         <html>
@@ -130,18 +134,21 @@ class EmailService:
         </html>
         """
         
-        return {
-            "personalizations": [
-                {
-                    "to": [{"email": self.to_email}]
-                }
-            ],
-            "from": {"email": self.from_email},
-            "subject": "❌ Video Summary Failed",
-            "content": [
-                {
-                    "type": "text/html",
-                    "value": html_content
-                }
-            ]
+        message = {
+            "senderAddress": self.from_email,
+            "recipients": {
+                "to": [{"address": self.to_email}]
+            },
+            "content": {
+                "subject": "❌ Video Summary Failed",
+                "html": html_content
+            }
         }
+        
+        try:
+            poller = self.email_client.begin_send(message)
+            result = poller.result()
+            logging.info(f"Failure email sent. Message ID: {result['id']}")
+        except Exception as e:
+            logging.error(f"Failed to send failure email: {str(e)}")
+            raise
