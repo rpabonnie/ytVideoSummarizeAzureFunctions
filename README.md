@@ -20,7 +20,6 @@ This serverless application processes YouTube videos by:
 
 ```mermaid
 graph TD
-graph TD
     A[HTTP POST Request] -->|YouTube URL| B[ytSummarizeToNotion Function]
     B --> C{Validate Input}
     C -->|Invalid URL| D[Return 400 Error]
