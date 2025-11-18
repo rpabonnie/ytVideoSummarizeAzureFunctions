@@ -139,6 +139,46 @@ class NotionService:
         logging.info(f"Loaded Notion config for database: {config.get('database_name', 'Unknown')}")
         return config
     
+    def _truncate_tag(self, tag: str, max_length: int = 100) -> str:
+        """
+        Safely truncate a tag to the specified maximum length.
+        
+        This method ensures:
+        - Tags are truncated at word boundaries when possible
+        - Unicode characters are not broken
+        - Empty or whitespace-only results are avoided
+        
+        Args:
+            tag: The tag string to truncate
+            max_length: Maximum allowed length (default: 100 for Notion)
+        
+        Returns:
+            str: Truncated tag string
+        """
+        tag_str = str(tag).strip()
+        
+        # If tag is within limit, return as-is
+        if len(tag_str) <= max_length:
+            return tag_str
+        
+        # Truncate to max_length, ensuring we don't break unicode characters
+        # Python 3 handles this correctly when slicing strings
+        truncated = tag_str[:max_length]
+        
+        # Try to truncate at last word boundary to avoid mid-word cuts
+        last_space = truncated.rfind(' ')
+        if last_space > 0:  # Only use word boundary if it's not at the start
+            truncated = truncated[:last_space]
+        
+        # Ensure we don't return empty string or just whitespace
+        truncated = truncated.strip()
+        if not truncated:
+            # If word boundary truncation resulted in empty string,
+            # fall back to simple truncation
+            truncated = tag_str[:max_length].strip()
+        
+        return truncated
+    
     def _build_properties(self, summary_data: dict, property_mapping: dict, static_properties: dict = None) -> dict:
         """
         Build Notion page properties from Gemini summary data.
@@ -197,7 +237,7 @@ class NotionService:
             for prop_name in tags_properties:
                 properties[prop_name] = {
                     "multi_select": [
-                        {"name": str(tag)[:100]} for tag in summary_data['tags'] if tag  # Notion tag limit
+                        {"name": self._truncate_tag(tag)} for tag in summary_data['tags'] if tag
                     ]
                 }
         
