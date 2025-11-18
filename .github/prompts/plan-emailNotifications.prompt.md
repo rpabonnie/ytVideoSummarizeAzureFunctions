@@ -36,77 +36,99 @@ ACS Email HTML Content
 
 #### 1.1 Create Email Communication Services Resource via Azure Marketplace
 
-**Option A: Azure Portal**
-1. Navigate to Azure Portal → Marketplace
-2. Search for "Email Communication Services"
-3. Click "Create"
-4. Fill in details:
+**Option A: Azure Portal (Recommended)**
+1. Navigate to Azure Portal → **Create a resource** or search in Marketplace
+2. Search for **"Email Communication Services"** (also listed as "Email Communication Service")
+3. Click **"Create"**
+4. Fill in the **Basics** tab:
    - **Subscription**: Select your Azure subscription
-   - **Resource Group**: Same as Function App
-   - **Name**: `ytvideosum-email` (must be globally unique)
-   - **Region**: Automatic (Global)
+   - **Resource Group**: Same as Function App (e.g., `rpabonnie-personal`)
+   - **Name**: Globally unique name (e.g., `rpc-email-alerts`)
+   - **Region**: Automatic (**Global**)
    - **Data Location**: **United States** (required for email services)
-5. Click "Review + Create" → "Create"
-6. Wait for deployment (~2 minutes)
+5. Click **"Review + Create"** → **"Create"**
+6. Wait for deployment (~1-2 minutes)
+7. Once deployed, click **"Go to resource"**
 
 **Option B: Azure CLI**
 ```powershell
+# Note: Requires 'communication' extension
+az extension add --name communication
+
 # Create Email Communication Services resource
-az communication email create `
-  --name ytvideosum-email `
+# Note: The resource type is 'communication' not 'communication email'
+az communication create `
+  --name rpc-email-alerts `
   --location "Global" `
   --data-location "United States" `
-  --resource-group <your-rg>
+  --resource-group rpabonnie-personal
 
 # Verify creation
-az communication email show `
-  --name ytvideosum-email `
-  --resource-group <your-rg>
+az communication show `
+  --name rpc-email-alerts `
+  --resource-group rpabonnie-personal
 ```
+
+**⚠️ Important Notes**:
+- The resource name must be globally unique across all Azure subscriptions
+- Data location is fixed to "United States" for email services
+- The Azure Portal may show this as "Email Communication Service" (singular) in some places
 
 #### 1.2 Provision Azure-Managed Domain (Free Sender Address)
 
-**Azure Portal:**
-1. Navigate to your Email Communication Services resource
-2. Go to "Provision Domains" → "Add domain"
-3. Select "Azure Managed Domain"
-4. Click "Add"
-5. Wait for provisioning (~5 minutes)
-6. You'll receive a free sender address: `DoNotReply@xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx.azurecomm.net`
+**Azure Portal (Recommended):**
+1. Navigate to your Email Communication Services resource (`rpc-email-alerts`)
+2. In the left sidebar, click **"Provision domains"** under Settings
+3. Click **"+ Add domain"** button at the top
+4. Select **"Azure Managed Domain"**
+5. Click **"Add"**
+6. Wait for provisioning (~2-5 minutes)
+7. Once provisioned, you'll see the domain listed with:
+   - **Domain name**: `xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx.azurecomm.net` (format may show as `bdba1f9f-569d-42e9-b923-2e84691...`)
+   - **Domain type**: "Azure subdomain"
+   - **Domain status**: "Verified" (with green checkmark)
+   - **SPF status**: "Verified"
+   - **DKIM status**: "Verified"
+   - **DKIM2 status**: "Verified"
+8. Click on the domain name to view details
+9. In the domain details, under **"MailFrom addresses"**, you'll find your sender address: `DoNotReply@xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx.azurecomm.net`
 
-**Azure CLI:**
-```powershell
-# List provisioned domains
-az communication email domain list `
-  --email-service-name ytvideosum-email `
-  --resource-group <your-rg>
-
-# Get domain details including sender address
-az communication email domain show `
-  --domain-name "AzureManagedDomain" `
-  --email-service-name ytvideosum-email `
-  --resource-group <your-rg>
-```
-
-**⚠️ Note**: Azure-managed domains require no DNS configuration and are immediately ready for sending emails. For custom domains (like yourcompany.com), additional DNS verification is required.
+**⚠️ Note**: 
+- Azure-managed domains require **no DNS configuration** and are immediately ready for sending emails
+- The domain is automatically verified with SPF, DKIM, and DKIM2 authentication
+- For custom domains (like yourcompany.com), additional DNS verification is required
+- You can add multiple sender usernames to this domain later (e.g., `alerts@`, `notifications@`)
 
 #### 1.3 Get Connection String
 
-**Azure Portal:**
-1. Navigate to your Email Communication Services resource
-2. Go to "Settings" → "Keys"
-3. Copy the **Primary Connection String**
-   - Format: `endpoint=https://ytvideosum-email.unitedstates.communication.azure.com/;accesskey=xxxxxxxx`
+**Azure Portal (Primary Method):**
+1. Navigate to your Email Communication Services resource (`rpc-email-alerts`)
+2. In the left sidebar, click **"Keys"** under Settings
+3. You'll see two connection strings:
+   - **Primary connection string**
+   - **Secondary connection string**
+4. Copy the **Primary connection string**
+   - Format: `endpoint=https://rpc-email-alerts.unitedstates.communication.azure.com/;accesskey=xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx`
 
-**Azure CLI:**
+**Azure CLI (Alternative Method):**
 ```powershell
-# Get connection string
-az communication email show-connection-string `
-  --name ytvideosum-email `
-  --resource-group <your-rg> `
-  --query "primaryConnectionString" `
-  --output tsv
+# First, install the Azure Communication Services CLI extension if not already installed
+az extension add --name communication
+
+# List keys for the Communication Services resource
+az communication list-key `
+  --name rpc-email-alerts `
+  --resource-group rpabonnie-personal
+
+# This returns both primaryKey and secondaryKey
+# You'll need to construct the connection string manually:
+# endpoint=https://<resource-name>.unitedstates.communication.azure.com/;accesskey=<primaryKey>
 ```
+
+**⚠️ Important**: 
+- The Azure Portal method is recommended as it provides the complete connection string ready to use
+- The CLI method requires manual construction of the connection string from the endpoint and key
+- Keep these credentials secure - they provide full access to send emails from your domain
 
 #### 1.4 Store Connection String in Azure Key Vault
 
@@ -139,9 +161,16 @@ az keyvault secret show `
 
 #### 1.5 Configure Sender Address Environment Variable
 
+**Get Your Sender Address:**
+1. In Azure Portal, navigate to your Email Communication Services resource
+2. Go to **"Provision domains"**
+3. Click on your Azure-managed domain (e.g., `bdba1f9f-569d-42e9-b923-2e84691...`)
+4. Under **"MailFrom addresses"**, copy the default sender address
+   - Format: `DoNotReply@xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx.azurecomm.net`
+
 **Add to Function App Application Settings:**
 ```powershell
-# Set sender email address (from Azure-managed domain)
+# Replace with your actual sender address from step above
 az functionapp config appsettings set `
   --name <your-function-app-name> `
   --resource-group <your-rg> `
@@ -156,6 +185,10 @@ az functionapp config appsettings set `
   }
 }
 ```
+
+**⚠️ Note**: 
+- The sender address must exactly match one of the MailFrom addresses in your provisioned domain
+- You can add custom sender usernames later (e.g., `alerts@`, `notifications@`) using the Azure Portal or Management SDK
 
 
 ---
