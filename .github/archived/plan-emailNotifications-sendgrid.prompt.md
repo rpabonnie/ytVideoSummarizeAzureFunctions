@@ -5,170 +5,166 @@ Implement email notification functionality using Azure Communication Services (A
 
 ## Overview
 
-This plan adds Azure Communication Services Email integration to the YouTube Video Summarizer Azure Function. The existing `EmailService` class will be adapted to use the ACS Email SDK with both success and failure email templates. This implementation will ensure notifications for:
+This plan adds Azure Communication Services Email integration to the YouTube Video Summarizer Azure Function. The existing `EmailService` class structure is adapted for ACS Email SDK integration with both success and failure email templates. This implementation will ensure notifications for:
 
 - ✅ **Success notifications**: When videos are successfully summarized and Notion pages created
 - ❌ **Failure notifications**: For all error scenarios (rate limits, invalid URLs, API failures, etc.)
 - 📧 **Professional HTML emails**: With formatted content, links, and error details
+- 🔐 **Azure-native security**: Managed Identity support, no API keys in production code
+
+## Why Azure Communication Services Email?
+
+**Azure Communication Services Email is the recommended solution** (verified from official Microsoft documentation):
+
+1. ✅ **Native Azure service** - First-party Microsoft solution, not third-party
+2. ✅ **Free Azure-managed domain** - `donotreply@xxxxxxxx.azurecomm.net` (no DNS verification needed)
+3. ✅ **Managed Identity support** - No API keys required in production
+4. ✅ **Cost-effective** - ~$0.25 per 1,000 emails (25k emails = ~$6.25/month)
+5. ✅ **Better integration** - Direct SDK integration with Azure Functions
+6. ✅ **SendGrid alternative** - SendGrid no longer sold via Azure Marketplace
+
+**Documentation**: [Azure Communication Services Email](https://learn.microsoft.com/en-us/azure/communication-services/concepts/email/prepare-email-communication-resource)
 
 ## Architecture
 
 ### Email Flow
 ```
-Azure Function → EmailService → ACS Email SDK → ACS Email API → Email Delivery
-     ↓                                                              ↓
-Error Occurs                                                User Notification
+Azure Function → EmailService (ACS SDK) → Azure Communication Services → Email Delivery
+     ↓                                                                        ↓
+Error Occurs                                                          User Notification
      ↓
 EmailService.send_failure_email()
      ↓
-ACS Email HTML Content
+ACS Email API (with HTML template)
 ```
 
-### Azure Communication Services Email Benefits
-- **Azure-native integration**: First-party Microsoft service with seamless Azure integration
-- **Managed Identity support**: Optional passwordless authentication for production
-- **Free Azure-managed domains**: No DNS verification required
-- **Reliable delivery**: Enterprise-grade email infrastructure
+### Azure Communication Services Benefits
+- **Native Azure integration**: Seamless with Azure Functions and Key Vault
+- **Managed Identity**: Production deployments use system-assigned identity (no secrets)
+- **Connection String**: Development uses connection string from Key Vault
+- **Delivery tracking**: Built-in email delivery status and event handling
 
 ## Implementation Steps
 
-### Step 1: Provision Azure Communication Services Email
+### Step 1: Provision Azure Communication Services
 
-#### 1.1 Create Email Communication Services Resource via Azure Marketplace
+#### 1.1 Create Azure Communication Services Resource
 
-**Option A: Azure Portal (Recommended)**
-1. Navigate to Azure Portal → **Create a resource** or search in Marketplace
-2. Search for **"Email Communication Services"** (also listed as "Email Communication Service")
-3. Click **"Create"**
-4. Fill in the **Basics** tab:
+**Option A: Azure Portal**
+1. Navigate to Azure Portal → Create a resource
+2. Search for "Communication Services"
+3. Click "Create"
+4. Fill in details:
    - **Subscription**: Select your Azure subscription
-   - **Resource Group**: Same as Function App (e.g., `rpabonnie-personal`)
-   - **Name**: Globally unique name (e.g., `rpc-email-alerts`)
-   - **Region**: Automatic (**Global**)
-   - **Data Location**: **United States** (required for email services)
-5. Click **"Review + Create"** → **"Create"**
+   - **Resource Group**: Same as Function App (e.g., `ytVideoSummarizer-rg`)
+   - **Resource Name**: `ytVideoSummarizer-acs` (must be globally unique)
+   - **Data Location**: United States (or your preferred region)
+5. Click "Review + Create" → "Create"
 6. Wait for deployment (~1-2 minutes)
-7. Once deployed, click **"Go to resource"**
 
 **Option B: Azure CLI**
 ```powershell
-# Note: Requires 'communication' extension
-az extension add --name communication
+# Set variables
+$resourceGroup = "<your-resource-group>"
+$acsName = "ytVideoSummarizer-acs"
+$location = "global"
+$dataLocation = "United States"
+
+# Create Communication Services resource
+az communication create `
+  --name $acsName `
+  --resource-group $resourceGroup `
+  --location $location `
+  --data-location $dataLocation
+```
+
+#### 1.2 Create Email Communication Services Resource
+
+**Option A: Azure Portal**
+1. Navigate to Azure Portal → Create a resource
+2. Search for "Email Communication Services"
+3. Click "Create"
+4. Fill in details:
+   - **Subscription**: Same as above
+   - **Resource Group**: Same as Function App
+   - **Resource Name**: `ytVideoSummarizer-email`
+   - **Data Location**: United States (must match ACS resource)
+5. Click "Review + Create" → "Create"
+
+**Option B: Azure CLI**
+```powershell
+$emailServiceName = "ytVideoSummarizer-email"
 
 # Create Email Communication Services resource
-# Note: The resource type is 'communication' not 'communication email'
-az communication create `
-  --name rpc-email-alerts `
-  --location "Global" `
-  --data-location "United States" `
-  --resource-group rpabonnie-personal
-
-# Verify creation
-az communication show `
-  --name rpc-email-alerts `
-  --resource-group rpabonnie-personal
+az communication email create `
+  --name $emailServiceName `
+  --resource-group $resourceGroup `
+  --location $location `
+  --data-location $dataLocation
 ```
 
-**⚠️ Important Notes**:
-- The resource name must be globally unique across all Azure subscriptions
-- Data location is fixed to "United States" for email services
-- The Azure Portal may show this as "Email Communication Service" (singular) in some places
+#### 1.3 Provision Azure-Managed Email Domain (Free, No Verification)
 
-#### 1.2 Provision Azure-Managed Domain (Free Sender Address)
+**Azure Portal Steps:**
+1. Navigate to your **Email Communication Services** resource (`ytVideoSummarizer-email`)
+2. In left menu, select **Provision domains**
+3. Click **Add domain** → **Azure domain** (free option)
+4. Click **Add**
+5. Azure provisions a domain like: `xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx.azurecomm.net`
+6. Wait for provisioning (~2-3 minutes)
+7. **Copy the domain name** - you'll use this as the sender address
 
-**Azure Portal (Recommended):**
-1. Navigate to your Email Communication Services resource (`rpc-email-alerts`)
-2. In the left sidebar, click **"Provision domains"** under Settings
-3. Click **"+ Add domain"** button at the top
-4. Select **"Azure Managed Domain"**
-5. Click **"Add"**
-6. Wait for provisioning (~2-5 minutes)
-7. Once provisioned, you'll see the domain listed with:
-   - **Domain name**: `xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx.azurecomm.net` (format may show as `bdba1f9f-569d-42e9-b923-2e84691...`)
-   - **Domain type**: "Azure subdomain"
-   - **Domain status**: "Verified" (with green checkmark)
-   - **SPF status**: "Verified"
-   - **DKIM status**: "Verified"
-   - **DKIM2 status**: "Verified"
-8. Click on the domain name to view details
-9. In the domain details, under **"MailFrom addresses"**, you'll find your sender address: `DoNotReply@xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx.azurecomm.net`
+**Result**: Your sender email will be: `DoNotReply@xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx.azurecomm.net`
 
-**⚠️ Note**: 
-- Azure-managed domains require **no DNS configuration** and are immediately ready for sending emails
-- The domain is automatically verified with SPF, DKIM, and DKIM2 authentication
-- For custom domains (like yourcompany.com), additional DNS verification is required
-- You can add multiple sender usernames to this domain later (e.g., `alerts@`, `notifications@`)
+**Note**: For custom domains (e.g., `noreply@yourdomain.com`), see [Custom Domain Setup](https://learn.microsoft.com/en-us/azure/communication-services/quickstarts/email/add-custom-verified-domains) - requires DNS verification.
 
-#### 1.3 Get Connection String
+#### 1.4 Connect Email Domain to Communication Services
 
-**⚠️ IMPORTANT**: Email Communication Services resources (`Microsoft.Communication/EmailServices`) do not directly provide connection strings. You need to create a separate **Communication Services** resource and link it to your Email Services resource.
+**Azure Portal Steps:**
+1. Navigate to your **Communication Services** resource (`ytVideoSummarizer-acs`)
+2. In left menu, select **Email** → **Domains**
+3. Click **Connect domain**
+4. Select your Email Communication Services resource (`ytVideoSummarizer-email`)
+5. Select the Azure-managed domain you provisioned
+6. Click **Connect**
+7. Wait for connection (~1 minute)
 
-**Method 1: Azure Portal (Create Linked Communication Services Resource)**
+**Verify**: Domain status should show "Connected"
 
-1. **Create a Communication Services Resource**:
-   - Navigate to Azure Portal → **Create a resource**
-   - Search for **"Communication Services"** (NOT "Email Communication Services")
-   - Click **Create**
-   - Fill in:
-     - **Resource Group**: `rpabonnie-personal`
-     - **Resource Name**: `rpc-communication` (globally unique)
-     - **Data Location**: **United States**
-   - Click **Review + Create** → **Create**
+#### 1.5 Get Connection String and Store in Key Vault
 
-2. **Link Email Domain to Communication Services**:
-   - Navigate to your Communication Services resource (`rpc-communication`)
-   - In left sidebar, go to **Email** → **Domains**
-   - Click **Connect domain**
-   - Select your Email Services resource (`rpc-email-alerts`)
-   - Select the domain you provisioned
-   - Click **Connect**
+**Get Connection String:**
 
-3. **Get Connection String**:
-   - In your Communication Services resource (`rpc-communication`)
-   - Go to **Settings** → **Keys**
-   - Copy the **Primary connection string**
+**Azure Portal:**
+1. Navigate to your **Communication Services** resource (`ytVideoSummarizer-acs`)
+2. In left menu, select **Keys**
+3. Copy the **Primary connection string**
+   - Format: `endpoint=https://<resource-name>.communication.azure.com/;accesskey=<key>`
 
-**Method 2: Azure CLI (After Creating Communication Services Resource)**
+**Azure CLI:**
 ```powershell
-# First, create a Communication Services resource
-az communication create `
-  --name rpc-communication `
-  --location "Global" `
-  --data-location "United States" `
-  --resource-group rpabonnie-personal
-
-# Get the connection string
-az communication list-key `
-  --name rpc-communication `
-  --resource-group rpabonnie-personal `
+# Get connection string
+$connectionString = az communication show-connection-string `
+  --name $acsName `
+  --resource-group $resourceGroup `
   --query "primaryConnectionString" `
   --output tsv
+
+Write-Host "Connection String: $connectionString"
 ```
 
-**Expected Connection String Format:**
-```
-endpoint=https://rpc-communication.unitedstates.communication.azure.com/;accesskey=xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
-```
-
-**Why This is Needed:**
-- `EmailServices` resources only manage domains and email configuration
-- `CommunicationServices` resources provide the SDK connection strings and API access
-- You must link the Email domain to the Communication Services resource to send emails
-- The Python SDK (`azure-communication-email`) uses the Communication Services connection string
-
-#### 1.4 Store Connection String in Azure Key Vault
+**Store in Azure Key Vault:**
 
 **Local Development:**
 ```powershell
 # Set variables
 $vaultName = "<your-keyvault-name>"
-$acsConnectionString = "<paste-connection-string>"
 
-# Store secret
+# Store connection string in Key Vault
 az keyvault secret set `
   --vault-name $vaultName `
   --name "ACS-CONNECTION-STRING" `
-  --value $acsConnectionString
+  --value $connectionString
 
 # Verify storage
 az keyvault secret show `
@@ -182,40 +178,13 @@ az keyvault secret show `
 1. Navigate to Azure Key Vault
 2. Secrets → "+ Generate/Import"
 3. **Name**: `ACS-CONNECTION-STRING`
-4. **Value**: Paste connection string
+4. **Value**: Paste ACS connection string
 5. Click "Create"
 
-#### 1.5 Configure Sender Address Environment Variable
-
-**Get Your Sender Address:**
-1. In Azure Portal, navigate to your Email Communication Services resource
-2. Go to **"Provision domains"**
-3. Click on your Azure-managed domain (e.g., `bdba1f9f-569d-42e9-b923-2e84691...`)
-4. Under **"MailFrom addresses"**, copy the default sender address
-   - Format: `DoNotReply@xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx.azurecomm.net`
-
-**Add to Function App Application Settings:**
-```powershell
-# Replace with your actual sender address from step above
-az functionapp config appsettings set `
-  --name <your-function-app-name> `
-  --resource-group <your-rg> `
-  --settings "ACS_SENDER_EMAIL=DoNotReply@xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx.azurecomm.net"
-```
-
-**For local testing, add to `local.settings.json`:**
-```json
-{
-  "Values": {
-    "ACS_SENDER_EMAIL": "DoNotReply@xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx.azurecomm.net"
-  }
-}
-```
-
-**⚠️ Note**: 
-- The sender address must exactly match one of the MailFrom addresses in your provisioned domain
-- You can add custom sender usernames later (e.g., `alerts@`, `notifications@`) using the Azure Portal or Management SDK
-
+**Security Note**: For production with Managed Identity:
+- Function App uses system-assigned identity to access Key Vault
+- No connection string needed in production code (retrieved from Key Vault at runtime)
+- Alternative: Use endpoint + Managed Identity directly (no connection string)
 
 ---
 
@@ -249,25 +218,25 @@ azure-communication-email>=1.0.0
 
 ### Step 3: Configure Function App Settings
 
-Add Azure Communication Services configuration to Azure Function App settings.
+Add Azure Communication Services configuration and email addresses to Azure Function App settings.
 
 #### 3.1 Configure ACS Connection String
 
-**Option A: Direct Key Vault Reference (Recommended)**
+**Option A: Direct Key Vault Reference (Recommended for Production)**
 ```powershell
 # Set Function App name and resource group
 $functionApp = "<your-function-app-name>"
 $resourceGroup = "<your-resource-group>"
 $keyVaultUrl = "<your-keyvault-url>"  # e.g., https://myvault.vault.azure.net/
 
-# Add ACS Connection String as Key Vault reference
+# Add ACS connection string as Key Vault reference
 az functionapp config appsettings set `
   --name $functionApp `
   --resource-group $resourceGroup `
   --settings "ACS_CONNECTION_STRING=@Microsoft.KeyVault(SecretUri=${keyVaultUrl}/secrets/ACS-CONNECTION-STRING/)"
 ```
 
-**Option B: Direct Value (Less Secure - Not Recommended)**
+**Option B: Direct Value (For Local Testing)**
 ```powershell
 # Retrieve secret from Key Vault
 $acsConnectionString = az keyvault secret show `
@@ -276,7 +245,7 @@ $acsConnectionString = az keyvault secret show `
   --query "value" `
   --output tsv
 
-# Set as app setting
+# Set as app setting (local testing only)
 az functionapp config appsettings set `
   --name $functionApp `
   --resource-group $resourceGroup `
@@ -291,12 +260,12 @@ az functionapp config appsettings set `
   --name $functionApp `
   --resource-group $resourceGroup `
   --settings `
-    "ACS_SENDER_EMAIL=DoNotReply@xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx.azurecomm.net" `
+    "EMAIL_FROM=<verified-sender-email@domain.com>" `
     "EMAIL_TO=<your-notification-email@domain.com>"
 ```
 
 **Important:**
-- `ACS_SENDER_EMAIL` should be the Azure-managed domain address from Step 1.2
+- `EMAIL_FROM` **must match** the verified sender email from Step 1.4
 - `EMAIL_TO` can be any email address (where you want to receive notifications)
 
 #### 3.3 Local Development Configuration
@@ -310,8 +279,8 @@ az functionapp config appsettings set `
     "AzureWebJobsStorage": "UseDevelopmentStorage=true",
     "FUNCTIONS_WORKER_RUNTIME": "python",
     "KEY_VAULT_URL": "https://<your-keyvault>.vault.azure.net/",
-    "ACS_CONNECTION_STRING": "<paste-connection-string-for-local-testing>",
-    "ACS_SENDER_EMAIL": "DoNotReply@xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx.azurecomm.net",
+    "SendGridApiKey": "<paste-sendgrid-api-key-for-local-testing>",
+    "EMAIL_FROM": "<verified-sender-email@domain.com>",
     "EMAIL_TO": "<your-email@domain.com>"
   }
 }
@@ -320,10 +289,10 @@ az functionapp config appsettings set `
 **⚠️ Security Note**: 
 - `local.settings.json` is in `.gitignore` (never commit secrets)
 - Use Key Vault references in production
-- For local testing, you can paste the ACS connection string directly
+- For local testing, you can paste the SendGrid API key directly
 
 **Actions:**
-- Update `local.settings.json` with ACS settings
+- Update `local.settings.json` with SendGrid settings
 - Configure Function App settings in Azure Portal or via CLI
 - Verify settings: `az functionapp config appsettings list --name $functionApp --resource-group $resourceGroup`
 
@@ -331,7 +300,7 @@ az functionapp config appsettings set `
 
 ### Step 4: Integrate EmailService into Function App
 
-Modify `function_app.py` to initialize `EmailService` and send notifications for success/failure scenarios using the Azure Communication Services SDK.
+Modify `function_app.py` to initialize `EmailService` and send notifications for success/failure scenarios.
 
 #### 4.1 Initialize EmailService (Module Level)
 
@@ -365,25 +334,33 @@ def _initialize_services():
         gemini_service = GeminiService(key_vault_url)
         notion_service = NotionService(key_vault_url)
         
-        # Initialize EmailService with ACS
-        acs_connection_string = os.environ.get("ACS_CONNECTION_STRING")
-        acs_sender_email = os.environ.get("ACS_SENDER_EMAIL")
+        # Initialize EmailService
+        from_email = os.environ.get("EMAIL_FROM")
         to_email = os.environ.get("EMAIL_TO")
         
-        if acs_connection_string and acs_sender_email and to_email:
-            email_service = EmailService(
-                connection_string=acs_connection_string,
-                sender_email=acs_sender_email,
-                recipient_email=to_email
-            )
-            logging.info("EmailService initialized successfully with ACS")
+        if from_email and to_email:
+            email_service = EmailService(from_email, to_email)
+            logging.info("EmailService initialized successfully")
         else:
-            logging.warning("Email configuration missing (ACS_CONNECTION_STRING/ACS_SENDER_EMAIL/EMAIL_TO). Email notifications disabled.")
+            logging.warning("Email configuration missing (EMAIL_FROM/EMAIL_TO). Email notifications disabled.")
         
         logging.info("Services initialized successfully")
 ```
 
-#### 4.2 Send Success Emails
+#### 4.2 Add SendGrid Output Binding Decorator
+
+**Update function signature:**
+```python
+@app.route(route="ytSummarizeToNotion", methods=["POST"])
+@app.send_grid_output(arg_name="sendGridMessage", api_key="SendGridApiKey")
+def ytSummarizeToNotion(req: func.HttpRequest, sendGridMessage: func.Out[str]) -> func.HttpResponse:
+```
+
+**Decorator Parameters:**
+- `arg_name="sendGridMessage"`: Output binding parameter name
+- `api_key="SendGridApiKey"`: App setting name containing SendGrid API key
+
+#### 4.3 Send Success Emails
 
 **After successful Notion page creation (around line 180):**
 
@@ -402,12 +379,13 @@ try:
     # Send success email notification
     if email_service and notion_url:
         try:
-            email_service.send_success_email(
+            email_data = email_service.format_success_email(
                 youtube_url=sanitized_url,
                 notion_url=notion_url,
                 summary=summary
             )
-            logging.info("Success email notification sent via ACS")
+            sendGridMessage.set(json.dumps(email_data))
+            logging.info("Success email notification queued for delivery")
         except Exception as e:
             logging.warning(f"Failed to send success email (non-fatal): {str(e)}")
     
@@ -430,19 +408,21 @@ def _send_failure_email(
     error_message: str
 ):
     """
-    Send failure notification email using ACS Email SDK.
+    Send failure notification email.
     
     Args:
+        sendGridMessage: SendGrid output binding
         youtube_url: YouTube URL that failed processing
         error_message: Error description
     """
     if email_service:
         try:
-            email_service.send_failure_email(
+            email_data = email_service.format_failure_email(
                 youtube_url=youtube_url,
                 error=error_message
             )
-            logging.info("Failure email notification sent via ACS")
+            sendGridMessage.set(json.dumps(email_data))
+            logging.info("Failure email notification queued for delivery")
         except Exception as e:
             logging.error(f"Failed to send failure email: {str(e)}")
 ```
@@ -456,6 +436,7 @@ if not is_allowed:
     
     # Send failure email
     _send_failure_email(
+        sendGridMessage,
         req_body.get('url', 'Unknown URL') if req_body else 'Unknown URL',
         f"Rate limit exceeded: {request_count}/{RATE_LIMIT_PER_HOUR} requests in last hour. Please try again later."
     )
@@ -470,6 +451,7 @@ except ValueError as e:
     
     # Send failure email (no URL available)
     _send_failure_email(
+        sendGridMessage,
         "N/A - Invalid Request",
         f"Invalid JSON format in request: {str(e)}"
     )
@@ -484,6 +466,7 @@ except InvalidYouTubeUrlError as e:
     
     # Send failure email
     _send_failure_email(
+        sendGridMessage,
         req_body.get('url', 'Invalid URL'),
         f"Request validation failed: {e.message}"
     )
@@ -498,6 +481,7 @@ except InvalidYouTubeUrlError as e:
     
     # Send failure email
     _send_failure_email(
+        sendGridMessage,
         youtube_url,
         f"Invalid YouTube URL: {e.message}"
     )
@@ -512,6 +496,7 @@ except GeminiApiError as e:
     
     # Send failure email
     _send_failure_email(
+        sendGridMessage,
         sanitized_url,
         f"AI summarization failed: {e.message}"
     )
@@ -526,6 +511,7 @@ except KeyVaultError as e:
     
     # Send failure email
     _send_failure_email(
+        sendGridMessage,
         sanitized_url,
         f"Configuration error (Key Vault): {e.message}"
     )
@@ -540,6 +526,7 @@ except Exception as e:
     
     # Send failure email
     _send_failure_email(
+        sendGridMessage,
         req_body.get('url', 'Unknown URL') if 'req_body' in locals() else 'Unknown',
         f"Internal server error: {str(e)}"
     )
@@ -549,7 +536,9 @@ except Exception as e:
 
 **Actions:**
 - Add `EmailService` import and initialization
-- Implement `_send_failure_email()` helper function (no output binding needed)
+- Add `@app.send_grid_output` decorator to function
+- Add `sendGridMessage: func.Out[str]` parameter
+- Implement `_send_failure_email()` helper function
 - Add success email after Notion page creation
 - Add failure emails in all error handling blocks
 
@@ -614,10 +603,11 @@ except Exception as e:
 if not notion_success and email_service:
     try:
         error_msg = "Summary generated successfully, but Notion page creation failed. Check Azure Function logs for details."
-        email_service.send_failure_email(
+        email_data = email_service.format_failure_email(
             youtube_url=sanitized_url,
             error=error_msg
         )
+        sendGridMessage.set(json.dumps(email_data))
         logging.info("Partial failure email notification sent")
     except Exception as e:
         logging.warning(f"Failed to send partial failure email: {str(e)}")
@@ -630,9 +620,9 @@ if not notion_success and email_service:
 **Recommendation**: **Non-fatal** (log warnings only)
 - Rationale: Core functionality (summarization, Notion) more important than notifications
 - Email delivery is best-effort
-- ACS SDK has retry mechanisms built in
+- SendGrid binding has automatic retry logic
 
-**Implementation**: Wrap all email send calls in try-except (already in plan).
+**Implementation**: Wrap all `sendGridMessage.set()` calls in try-except (already in plan).
 
 ---
 
@@ -1195,99 +1185,58 @@ After successful implementation:
 - [Key Vault Best Practices](https://learn.microsoft.com/azure/key-vault/general/best-practices)
 - [Key Vault References in App Settings](https://learn.microsoft.com/azure/app-service/app-service-key-vault-references)
 
-### Azure Communication Services
-- [Azure Communication Services Email Overview](https://learn.microsoft.com/azure/communication-services/concepts/email/email-overview)
-- [Email Quickstart](https://learn.microsoft.com/azure/communication-services/quickstarts/email/send-email)
-- [Azure Communication Services Python SDK](https://learn.microsoft.com/python/api/overview/azure/communication-email-readme)
-
 ### Project Files
-- `services/email_service.py` - EmailService implementation (requires ACS SDK adaptation)
+- `services/email_service.py` - EmailService implementation (already complete)
 - `function_app.py` - Main function logic (requires integration)
 - `utils/exceptions.py` - Custom exceptions
 - `.github/prompts/agent.md` - Architecture guidelines
 
 ---
 
-## Appendix: Updated EmailService Class Reference
+## Appendix: EmailService Class Reference
 
-The `EmailService` class in `services/email_service.py` should be updated to use the Azure Communication Services Email SDK:
+The `EmailService` class (already implemented in `services/email_service.py`) provides:
 
-### Required Changes
+### Methods
 
-**Original SendGrid Output Binding Approach:**
-- Methods returned dictionaries for SendGrid output binding
-- `format_success_email()` and `format_failure_email()` returned dict structures
-
-**New ACS SDK Approach:**
-- Methods should send emails directly using `EmailClient`
-- Rename methods to `send_success_email()` and `send_failure_email()`
-- Return boolean indicating success/failure instead of dict
-
-### Updated Class Structure
-
-**`__init__(connection_string: str, sender_email: str, recipient_email: str)`**
-- Initializes `EmailClient` with connection string
-- Stores sender and recipient email addresses
-- Validates all parameters are provided
+**`__init__(from_email: str, to_email: str)`**
+- Initializes service with sender and recipient emails
+- Validates emails are not empty
 - Logs initialization
 
-**`send_success_email(youtube_url: str, notion_url: str, summary: dict) -> bool`**
-- Sends success notification email via ACS Email SDK
-- Constructs HTML email content with video title, summary, Notion link
-- Uses `EmailClient.begin_send()` method
-- Returns `True` on success, `False` on failure
-- Logs email send operations
+**`format_success_email(youtube_url: str, notion_url: str, summary: dict) -> Dict[str, Any]`**
+- Creates SendGrid-compatible success email data
+- Includes video title, brief summary, Notion link button
+- Returns dict with `personalizations`, `from`, `subject`, `content` keys
 
-**`send_failure_email(youtube_url: str, error: str) -> bool`**
-- Sends failure notification email via ACS Email SDK
-- Constructs HTML email content with error details
-- Returns `True` on success, `False` on failure
-- Logs email send operations
+**`format_failure_email(youtube_url: str, error: str) -> Dict[str, Any]`**
+- Creates SendGrid-compatible failure email data
+- Includes error message in styled code block
+- Returns same structure as success email
 
-### Usage Example (Updated for ACS)
+### Usage Example
 
 ```python
-from azure.communication.email import EmailClient
-
 # Initialize
 email_service = EmailService(
-    connection_string="endpoint=https://...;accesskey=...",
-    sender_email="DoNotReply@xxxxxxxx.azurecomm.net",
-    recipient_email="notifications@yourdomain.com"
+    from_email="noreply@yourdomain.com",
+    to_email="notifications@yourdomain.com"
 )
 
-# Success email - returns boolean
-success = email_service.send_success_email(
+# Success email
+email_data = email_service.format_success_email(
     youtube_url="https://youtube.com/watch?v=abc",
     notion_url="https://notion.so/page-id",
     summary={"title": "Video Title", "brief_summary": "..."}
 )
+sendGridMessage.set(json.dumps(email_data))
 
-# Failure email - returns boolean
-success = email_service.send_failure_email(
+# Failure email
+email_data = email_service.format_failure_email(
     youtube_url="https://youtube.com/watch?v=xyz",
     error="Invalid video ID"
 )
-```
-
-### ACS Email Message Structure
-
-```python
-# Example message structure for ACS SDK
-message = {
-    "content": {
-        "subject": "Email Subject",
-        "html": "<html><body>Email content</body></html>"
-    },
-    "recipients": {
-        "to": [{"address": "recipient@domain.com"}]
-    },
-    "senderAddress": "DoNotReply@xxxxxxxx.azurecomm.net"
-}
-
-# Send email
-poller = email_client.begin_send(message)
-result = poller.result()
+sendGridMessage.set(json.dumps(email_data))
 ```
 
 ---
