@@ -1,11 +1,11 @@
 ````prompt
-# Plan: Integrate SendGrid Email Notifications with Comprehensive Error Reporting
+# Plan: Integrate Azure Communication Services Email with Comprehensive Error Reporting
 
-Implement email notification functionality using SendGrid to notify when Notion pages are successfully created and send detailed alerts for all errors and failures during video processing.
+Implement email notification functionality using Azure Communication Services (ACS) Email to notify when Notion pages are successfully created and send detailed alerts for all errors and failures during video processing.
 
 ## Overview
 
-This plan adds SendGrid email integration to the YouTube Video Summarizer Azure Function. The existing `EmailService` class is already designed for SendGrid output binding integration with both success and failure email templates. This implementation will ensure notifications for:
+This plan adds Azure Communication Services Email integration to the YouTube Video Summarizer Azure Function. The existing `EmailService` class will be adapted to use the ACS Email SDK with both success and failure email templates. This implementation will ensure notifications for:
 
 - ✅ **Success notifications**: When videos are successfully summarized and Notion pages created
 - ❌ **Failure notifications**: For all error scenarios (rate limits, invalid URLs, API failures, etc.)
@@ -15,94 +15,117 @@ This plan adds SendGrid email integration to the YouTube Video Summarizer Azure 
 
 ### Email Flow
 ```
-Azure Function → SendGrid Output Binding → SendGrid API → Email Delivery
-     ↓                                                          ↓
-Error Occurs                                            User Notification
+Azure Function → EmailService → ACS Email SDK → ACS Email API → Email Delivery
+     ↓                                                              ↓
+Error Occurs                                                User Notification
      ↓
-EmailService.format_failure_email()
+EmailService.send_failure_email()
      ↓
-SendGrid HTML Template
+ACS Email HTML Content
 ```
 
-### SendGrid Output Binding Benefits
-- **Declarative integration**: No SDK code required in function logic
-- **Automatic retry**: Built-in retry logic for transient failures
-- **Minimal latency**: Async delivery doesn't block function execution
-- **Type safety**: Structured message format
+### Azure Communication Services Email Benefits
+- **Azure-native integration**: First-party Microsoft service with seamless Azure integration
+- **Managed Identity support**: Optional passwordless authentication for production
+- **Free Azure-managed domains**: No DNS verification required
+- **Reliable delivery**: Enterprise-grade email infrastructure
 
 ## Implementation Steps
 
-### Step 1: Provision SendGrid in Azure
+### Step 1: Provision Azure Communication Services Email
 
-#### 1.1 Create SendGrid Account via Azure Marketplace
+#### 1.1 Create Email Communication Services Resource via Azure Marketplace
 
 **Option A: Azure Portal**
 1. Navigate to Azure Portal → Marketplace
-2. Search for "SendGrid Email Delivery"
+2. Search for "Email Communication Services"
 3. Click "Create"
 4. Fill in details:
    - **Subscription**: Select your Azure subscription
    - **Resource Group**: Same as Function App
-   - **Name**: `ytvideosum-sendgrid` (or similar)
-   - **Password**: Create secure password
-   - **Pricing Tier**: **Free (25,000 emails/month)**
-   - **Contact Information**: Your email, name, company
-   - **Accept Marketing Emails**: Uncheck (optional)
+   - **Name**: `ytvideosum-email` (must be globally unique)
+   - **Region**: Automatic (Global)
+   - **Data Location**: **United States** (required for email services)
 5. Click "Review + Create" → "Create"
 6. Wait for deployment (~2 minutes)
 
 **Option B: Azure CLI**
 ```powershell
-# Create SendGrid account
-az resource create `
-  --resource-group <your-rg> `
-  --name ytvideosum-sendgrid `
-  --resource-type "Sendgrid.Email/accounts" `
-  --is-full-object `
-  --properties '{
-    "password": "<secure-password>",
-    "acceptMarketingEmails": false,
-    "email": "<your-email@domain.com>",
-    "firstName": "<FirstName>",
-    "lastName": "<LastName>",
-    "company": "<Company>",
-    "website": "https://github.com/rpabonnie/ytVideoSummarizeAzureFunctions"
-  }'
+# Create Email Communication Services resource
+az communication email create `
+  --name ytvideosum-email `
+  --location "Global" `
+  --data-location "United States" `
+  --resource-group <your-rg>
+
+# Verify creation
+az communication email show `
+  --name ytvideosum-email `
+  --resource-group <your-rg>
 ```
 
-#### 1.2 Get SendGrid API Key
+#### 1.2 Provision Azure-Managed Domain (Free Sender Address)
 
-1. **Access SendGrid Portal**
-   - Azure Portal → Your SendGrid resource → "Manage" button
-   - This opens SendGrid dashboard at app.sendgrid.com
+**Azure Portal:**
+1. Navigate to your Email Communication Services resource
+2. Go to "Provision Domains" → "Add domain"
+3. Select "Azure Managed Domain"
+4. Click "Add"
+5. Wait for provisioning (~5 minutes)
+6. You'll receive a free sender address: `DoNotReply@xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx.azurecomm.net`
 
-2. **Create API Key**
-   - Navigate to Settings → API Keys
-   - Click "Create API Key"
-   - **Name**: `AzureFunctionEmailNotifications`
-   - **Permissions**: "Full Access" (or minimum "Mail Send")
-   - Click "Create & View"
-   - **⚠️ Copy the API key immediately** (shown only once)
-   - Format: `SG.xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx`
+**Azure CLI:**
+```powershell
+# List provisioned domains
+az communication email domain list `
+  --email-service-name ytvideosum-email `
+  --resource-group <your-rg>
 
-#### 1.3 Store API Key in Azure Key Vault
+# Get domain details including sender address
+az communication email domain show `
+  --domain-name "AzureManagedDomain" `
+  --email-service-name ytvideosum-email `
+  --resource-group <your-rg>
+```
+
+**⚠️ Note**: Azure-managed domains require no DNS configuration and are immediately ready for sending emails. For custom domains (like yourcompany.com), additional DNS verification is required.
+
+#### 1.3 Get Connection String
+
+**Azure Portal:**
+1. Navigate to your Email Communication Services resource
+2. Go to "Settings" → "Keys"
+3. Copy the **Primary Connection String**
+   - Format: `endpoint=https://ytvideosum-email.unitedstates.communication.azure.com/;accesskey=xxxxxxxx`
+
+**Azure CLI:**
+```powershell
+# Get connection string
+az communication email show-connection-string `
+  --name ytvideosum-email `
+  --resource-group <your-rg> `
+  --query "primaryConnectionString" `
+  --output tsv
+```
+
+#### 1.4 Store Connection String in Azure Key Vault
 
 **Local Development:**
 ```powershell
 # Set variables
 $vaultName = "<your-keyvault-name>"
-$sendGridKey = "<paste-sendgrid-api-key>"
+$acsConnectionString = "<paste-connection-string>"
 
 # Store secret
 az keyvault secret set `
   --vault-name $vaultName `
-  --name "SENDGRID-API-KEY" `
-  --value $sendGridKey
+  --name "ACS-CONNECTION-STRING" `
+  --value $acsConnectionString
 
 # Verify storage
 az keyvault secret show `
   --vault-name $vaultName `
-  --name "SENDGRID-API-KEY" `
+  --name "ACS-CONNECTION-STRING" `
   --query "value" `
   --output tsv
 ```
@@ -110,64 +133,42 @@ az keyvault secret show `
 **Production (Azure Portal):**
 1. Navigate to Azure Key Vault
 2. Secrets → "+ Generate/Import"
-3. **Name**: `SENDGRID-API-KEY`
-4. **Value**: Paste SendGrid API key
+3. **Name**: `ACS-CONNECTION-STRING`
+4. **Value**: Paste connection string
 5. Click "Create"
 
-#### 1.4 Verify Sender Email Address
+#### 1.5 Configure Sender Address Environment Variable
 
-**⚠️ Critical Requirement**: SendGrid requires sender email verification to prevent spam.
+**Add to Function App Application Settings:**
+```powershell
+# Set sender email address (from Azure-managed domain)
+az functionapp config appsettings set `
+  --name <your-function-app-name> `
+  --resource-group <your-rg> `
+  --settings "ACS_SENDER_EMAIL=DoNotReply@xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx.azurecomm.net"
+```
 
-**Single Sender Verification (Free Tier - Recommended for Personal Use):**
+**For local testing, add to `local.settings.json`:**
+```json
+{
+  "Values": {
+    "ACS_SENDER_EMAIL": "DoNotReply@xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx.azurecomm.net"
+  }
+}
+```
 
-1. **Access Sender Authentication**
-   - SendGrid Portal → Settings → Sender Authentication
-   - Click "Verify a Single Sender"
-
-2. **Create Sender Identity**
-   - Click "Create New Sender"
-   - Fill in form:
-     - **From Name**: `YouTube Video Summarizer` (or your name)
-     - **From Email Address**: `<your-email@domain.com>` (any email you control)
-     - **Reply To**: Same as From Email (or different if preferred)
-     - **Company**: Your name/company
-     - **Address, City, State, Zip, Country**: Your information
-   - Click "Create"
-
-3. **Verify Email**
-   - Check inbox of the "From Email Address" you provided
-   - Look for email from "SendGrid" with subject "SendGrid Sender Verification"
-   - Click the verification link
-   - Confirmation page appears: "Your sender identity has been verified"
-
-4. **Verify Status**
-   - Return to SendGrid Portal → Sender Authentication → Single Sender Verification
-   - Status should show "Verified" with green checkmark
-
-**Domain Authentication (Production/Custom Domain - Optional):**
-
-If you have a custom domain (e.g., `yourdomain.com`), you can authenticate the entire domain:
-
-1. SendGrid Portal → Settings → Sender Authentication → "Authenticate Your Domain"
-2. Select DNS host (e.g., GoDaddy, Cloudflare, Azure DNS)
-3. SendGrid provides DNS records (CNAME, TXT)
-4. Add records to your domain's DNS settings
-5. Return to SendGrid and click "Verify"
-6. Once verified, you can send from any `@yourdomain.com` email
-
-**For this project**: Single Sender Verification is sufficient.
 
 ---
 
 ### Step 2: Update Project Dependencies
 
-Add SendGrid binding library to `requirements.txt`.
+Add Azure Communication Services Email SDK to `requirements.txt`.
 
 **File**: `requirements.txt`
 
 **Add this line:**
 ```txt
-azure-functions-sendgrid
+azure-communication-email>=1.0.0
 ```
 
 **Complete requirements.txt (for reference):**
@@ -177,21 +178,21 @@ azure-identity
 azure-keyvault-secrets
 google-genai
 notion-client
-azure-functions-sendgrid
+azure-communication-email>=1.0.0
 ```
 
 **Actions:**
 - Edit `requirements.txt`
-- Add `azure-functions-sendgrid` to dependencies
+- Add `azure-communication-email>=1.0.0` to dependencies
 - Install locally: `pip install -r requirements.txt`
 
 ---
 
 ### Step 3: Configure Function App Settings
 
-Add SendGrid configuration and email addresses to Azure Function App settings.
+Add Azure Communication Services configuration to Azure Function App settings.
 
-#### 3.1 Configure SendGrid API Key
+#### 3.1 Configure ACS Connection String
 
 **Option A: Direct Key Vault Reference (Recommended)**
 ```powershell
@@ -200,19 +201,19 @@ $functionApp = "<your-function-app-name>"
 $resourceGroup = "<your-resource-group>"
 $keyVaultUrl = "<your-keyvault-url>"  # e.g., https://myvault.vault.azure.net/
 
-# Add SendGrid API Key as Key Vault reference
+# Add ACS Connection String as Key Vault reference
 az functionapp config appsettings set `
   --name $functionApp `
   --resource-group $resourceGroup `
-  --settings "SendGridApiKey=@Microsoft.KeyVault(SecretUri=${keyVaultUrl}/secrets/SENDGRID-API-KEY/)"
+  --settings "ACS_CONNECTION_STRING=@Microsoft.KeyVault(SecretUri=${keyVaultUrl}/secrets/ACS-CONNECTION-STRING/)"
 ```
 
 **Option B: Direct Value (Less Secure - Not Recommended)**
 ```powershell
 # Retrieve secret from Key Vault
-$sendGridKey = az keyvault secret show `
+$acsConnectionString = az keyvault secret show `
   --vault-name $vaultName `
-  --name "SENDGRID-API-KEY" `
+  --name "ACS-CONNECTION-STRING" `
   --query "value" `
   --output tsv
 
@@ -220,7 +221,7 @@ $sendGridKey = az keyvault secret show `
 az functionapp config appsettings set `
   --name $functionApp `
   --resource-group $resourceGroup `
-  --settings "SendGridApiKey=$sendGridKey"
+  --settings "ACS_CONNECTION_STRING=$acsConnectionString"
 ```
 
 #### 3.2 Configure Email Addresses
@@ -231,12 +232,12 @@ az functionapp config appsettings set `
   --name $functionApp `
   --resource-group $resourceGroup `
   --settings `
-    "EMAIL_FROM=<verified-sender-email@domain.com>" `
+    "ACS_SENDER_EMAIL=DoNotReply@xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx.azurecomm.net" `
     "EMAIL_TO=<your-notification-email@domain.com>"
 ```
 
 **Important:**
-- `EMAIL_FROM` **must match** the verified sender email from Step 1.4
+- `ACS_SENDER_EMAIL` should be the Azure-managed domain address from Step 1.2
 - `EMAIL_TO` can be any email address (where you want to receive notifications)
 
 #### 3.3 Local Development Configuration
@@ -250,8 +251,8 @@ az functionapp config appsettings set `
     "AzureWebJobsStorage": "UseDevelopmentStorage=true",
     "FUNCTIONS_WORKER_RUNTIME": "python",
     "KEY_VAULT_URL": "https://<your-keyvault>.vault.azure.net/",
-    "SendGridApiKey": "<paste-sendgrid-api-key-for-local-testing>",
-    "EMAIL_FROM": "<verified-sender-email@domain.com>",
+    "ACS_CONNECTION_STRING": "<paste-connection-string-for-local-testing>",
+    "ACS_SENDER_EMAIL": "DoNotReply@xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx.azurecomm.net",
     "EMAIL_TO": "<your-email@domain.com>"
   }
 }
@@ -260,10 +261,10 @@ az functionapp config appsettings set `
 **⚠️ Security Note**: 
 - `local.settings.json` is in `.gitignore` (never commit secrets)
 - Use Key Vault references in production
-- For local testing, you can paste the SendGrid API key directly
+- For local testing, you can paste the ACS connection string directly
 
 **Actions:**
-- Update `local.settings.json` with SendGrid settings
+- Update `local.settings.json` with ACS settings
 - Configure Function App settings in Azure Portal or via CLI
 - Verify settings: `az functionapp config appsettings list --name $functionApp --resource-group $resourceGroup`
 
@@ -271,7 +272,7 @@ az functionapp config appsettings set `
 
 ### Step 4: Integrate EmailService into Function App
 
-Modify `function_app.py` to initialize `EmailService` and send notifications for success/failure scenarios.
+Modify `function_app.py` to initialize `EmailService` and send notifications for success/failure scenarios using the Azure Communication Services SDK.
 
 #### 4.1 Initialize EmailService (Module Level)
 
@@ -305,33 +306,25 @@ def _initialize_services():
         gemini_service = GeminiService(key_vault_url)
         notion_service = NotionService(key_vault_url)
         
-        # Initialize EmailService
-        from_email = os.environ.get("EMAIL_FROM")
+        # Initialize EmailService with ACS
+        acs_connection_string = os.environ.get("ACS_CONNECTION_STRING")
+        acs_sender_email = os.environ.get("ACS_SENDER_EMAIL")
         to_email = os.environ.get("EMAIL_TO")
         
-        if from_email and to_email:
-            email_service = EmailService(from_email, to_email)
-            logging.info("EmailService initialized successfully")
+        if acs_connection_string and acs_sender_email and to_email:
+            email_service = EmailService(
+                connection_string=acs_connection_string,
+                sender_email=acs_sender_email,
+                recipient_email=to_email
+            )
+            logging.info("EmailService initialized successfully with ACS")
         else:
-            logging.warning("Email configuration missing (EMAIL_FROM/EMAIL_TO). Email notifications disabled.")
+            logging.warning("Email configuration missing (ACS_CONNECTION_STRING/ACS_SENDER_EMAIL/EMAIL_TO). Email notifications disabled.")
         
         logging.info("Services initialized successfully")
 ```
 
-#### 4.2 Add SendGrid Output Binding Decorator
-
-**Update function signature:**
-```python
-@app.route(route="ytSummarizeToNotion", methods=["POST"])
-@app.send_grid_output(arg_name="sendGridMessage", api_key="SendGridApiKey")
-def ytSummarizeToNotion(req: func.HttpRequest, sendGridMessage: func.Out[str]) -> func.HttpResponse:
-```
-
-**Decorator Parameters:**
-- `arg_name="sendGridMessage"`: Output binding parameter name
-- `api_key="SendGridApiKey"`: App setting name containing SendGrid API key
-
-#### 4.3 Send Success Emails
+#### 4.2 Send Success Emails
 
 **After successful Notion page creation (around line 180):**
 
@@ -350,13 +343,12 @@ try:
     # Send success email notification
     if email_service and notion_url:
         try:
-            email_data = email_service.format_success_email(
+            email_service.send_success_email(
                 youtube_url=sanitized_url,
                 notion_url=notion_url,
                 summary=summary
             )
-            sendGridMessage.set(json.dumps(email_data))
-            logging.info("Success email notification queued for delivery")
+            logging.info("Success email notification sent via ACS")
         except Exception as e:
             logging.warning(f"Failed to send success email (non-fatal): {str(e)}")
     
@@ -379,21 +371,19 @@ def _send_failure_email(
     error_message: str
 ):
     """
-    Send failure notification email.
+    Send failure notification email using ACS Email SDK.
     
     Args:
-        sendGridMessage: SendGrid output binding
         youtube_url: YouTube URL that failed processing
         error_message: Error description
     """
     if email_service:
         try:
-            email_data = email_service.format_failure_email(
+            email_service.send_failure_email(
                 youtube_url=youtube_url,
                 error=error_message
             )
-            sendGridMessage.set(json.dumps(email_data))
-            logging.info("Failure email notification queued for delivery")
+            logging.info("Failure email notification sent via ACS")
         except Exception as e:
             logging.error(f"Failed to send failure email: {str(e)}")
 ```
@@ -407,7 +397,6 @@ if not is_allowed:
     
     # Send failure email
     _send_failure_email(
-        sendGridMessage,
         req_body.get('url', 'Unknown URL') if req_body else 'Unknown URL',
         f"Rate limit exceeded: {request_count}/{RATE_LIMIT_PER_HOUR} requests in last hour. Please try again later."
     )
@@ -422,7 +411,6 @@ except ValueError as e:
     
     # Send failure email (no URL available)
     _send_failure_email(
-        sendGridMessage,
         "N/A - Invalid Request",
         f"Invalid JSON format in request: {str(e)}"
     )
@@ -437,7 +425,6 @@ except InvalidYouTubeUrlError as e:
     
     # Send failure email
     _send_failure_email(
-        sendGridMessage,
         req_body.get('url', 'Invalid URL'),
         f"Request validation failed: {e.message}"
     )
@@ -452,7 +439,6 @@ except InvalidYouTubeUrlError as e:
     
     # Send failure email
     _send_failure_email(
-        sendGridMessage,
         youtube_url,
         f"Invalid YouTube URL: {e.message}"
     )
@@ -467,7 +453,6 @@ except GeminiApiError as e:
     
     # Send failure email
     _send_failure_email(
-        sendGridMessage,
         sanitized_url,
         f"AI summarization failed: {e.message}"
     )
@@ -482,7 +467,6 @@ except KeyVaultError as e:
     
     # Send failure email
     _send_failure_email(
-        sendGridMessage,
         sanitized_url,
         f"Configuration error (Key Vault): {e.message}"
     )
@@ -497,7 +481,6 @@ except Exception as e:
     
     # Send failure email
     _send_failure_email(
-        sendGridMessage,
         req_body.get('url', 'Unknown URL') if 'req_body' in locals() else 'Unknown',
         f"Internal server error: {str(e)}"
     )
@@ -507,9 +490,7 @@ except Exception as e:
 
 **Actions:**
 - Add `EmailService` import and initialization
-- Add `@app.send_grid_output` decorator to function
-- Add `sendGridMessage: func.Out[str]` parameter
-- Implement `_send_failure_email()` helper function
+- Implement `_send_failure_email()` helper function (no output binding needed)
 - Add success email after Notion page creation
 - Add failure emails in all error handling blocks
 
@@ -574,11 +555,10 @@ except Exception as e:
 if not notion_success and email_service:
     try:
         error_msg = "Summary generated successfully, but Notion page creation failed. Check Azure Function logs for details."
-        email_data = email_service.format_failure_email(
+        email_service.send_failure_email(
             youtube_url=sanitized_url,
             error=error_msg
         )
-        sendGridMessage.set(json.dumps(email_data))
         logging.info("Partial failure email notification sent")
     except Exception as e:
         logging.warning(f"Failed to send partial failure email: {str(e)}")
@@ -591,9 +571,9 @@ if not notion_success and email_service:
 **Recommendation**: **Non-fatal** (log warnings only)
 - Rationale: Core functionality (summarization, Notion) more important than notifications
 - Email delivery is best-effort
-- SendGrid binding has automatic retry logic
+- ACS SDK has retry mechanisms built in
 
-**Implementation**: Wrap all `sendGridMessage.set()` calls in try-except (already in plan).
+**Implementation**: Wrap all email send calls in try-except (already in plan).
 
 ---
 
@@ -1156,58 +1136,99 @@ After successful implementation:
 - [Key Vault Best Practices](https://learn.microsoft.com/azure/key-vault/general/best-practices)
 - [Key Vault References in App Settings](https://learn.microsoft.com/azure/app-service/app-service-key-vault-references)
 
+### Azure Communication Services
+- [Azure Communication Services Email Overview](https://learn.microsoft.com/azure/communication-services/concepts/email/email-overview)
+- [Email Quickstart](https://learn.microsoft.com/azure/communication-services/quickstarts/email/send-email)
+- [Azure Communication Services Python SDK](https://learn.microsoft.com/python/api/overview/azure/communication-email-readme)
+
 ### Project Files
-- `services/email_service.py` - EmailService implementation (already complete)
+- `services/email_service.py` - EmailService implementation (requires ACS SDK adaptation)
 - `function_app.py` - Main function logic (requires integration)
 - `utils/exceptions.py` - Custom exceptions
 - `.github/prompts/agent.md` - Architecture guidelines
 
 ---
 
-## Appendix: EmailService Class Reference
+## Appendix: Updated EmailService Class Reference
 
-The `EmailService` class (already implemented in `services/email_service.py`) provides:
+The `EmailService` class in `services/email_service.py` should be updated to use the Azure Communication Services Email SDK:
 
-### Methods
+### Required Changes
 
-**`__init__(from_email: str, to_email: str)`**
-- Initializes service with sender and recipient emails
-- Validates emails are not empty
+**Original SendGrid Output Binding Approach:**
+- Methods returned dictionaries for SendGrid output binding
+- `format_success_email()` and `format_failure_email()` returned dict structures
+
+**New ACS SDK Approach:**
+- Methods should send emails directly using `EmailClient`
+- Rename methods to `send_success_email()` and `send_failure_email()`
+- Return boolean indicating success/failure instead of dict
+
+### Updated Class Structure
+
+**`__init__(connection_string: str, sender_email: str, recipient_email: str)`**
+- Initializes `EmailClient` with connection string
+- Stores sender and recipient email addresses
+- Validates all parameters are provided
 - Logs initialization
 
-**`format_success_email(youtube_url: str, notion_url: str, summary: dict) -> Dict[str, Any]`**
-- Creates SendGrid-compatible success email data
-- Includes video title, brief summary, Notion link button
-- Returns dict with `personalizations`, `from`, `subject`, `content` keys
+**`send_success_email(youtube_url: str, notion_url: str, summary: dict) -> bool`**
+- Sends success notification email via ACS Email SDK
+- Constructs HTML email content with video title, summary, Notion link
+- Uses `EmailClient.begin_send()` method
+- Returns `True` on success, `False` on failure
+- Logs email send operations
 
-**`format_failure_email(youtube_url: str, error: str) -> Dict[str, Any]`**
-- Creates SendGrid-compatible failure email data
-- Includes error message in styled code block
-- Returns same structure as success email
+**`send_failure_email(youtube_url: str, error: str) -> bool`**
+- Sends failure notification email via ACS Email SDK
+- Constructs HTML email content with error details
+- Returns `True` on success, `False` on failure
+- Logs email send operations
 
-### Usage Example
+### Usage Example (Updated for ACS)
 
 ```python
+from azure.communication.email import EmailClient
+
 # Initialize
 email_service = EmailService(
-    from_email="noreply@yourdomain.com",
-    to_email="notifications@yourdomain.com"
+    connection_string="endpoint=https://...;accesskey=...",
+    sender_email="DoNotReply@xxxxxxxx.azurecomm.net",
+    recipient_email="notifications@yourdomain.com"
 )
 
-# Success email
-email_data = email_service.format_success_email(
+# Success email - returns boolean
+success = email_service.send_success_email(
     youtube_url="https://youtube.com/watch?v=abc",
     notion_url="https://notion.so/page-id",
     summary={"title": "Video Title", "brief_summary": "..."}
 )
-sendGridMessage.set(json.dumps(email_data))
 
-# Failure email
-email_data = email_service.format_failure_email(
+# Failure email - returns boolean
+success = email_service.send_failure_email(
     youtube_url="https://youtube.com/watch?v=xyz",
     error="Invalid video ID"
 )
-sendGridMessage.set(json.dumps(email_data))
+```
+
+### ACS Email Message Structure
+
+```python
+# Example message structure for ACS SDK
+message = {
+    "content": {
+        "subject": "Email Subject",
+        "html": "<html><body>Email content</body></html>"
+    },
+    "recipients": {
+        "to": [{"address": "recipient@domain.com"}]
+    },
+    "senderAddress": "DoNotReply@xxxxxxxx.azurecomm.net"
+}
+
+# Send email
+poller = email_client.begin_send(message)
+result = poller.result()
 ```
 
 ---
