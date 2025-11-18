@@ -64,8 +64,8 @@ graph TD
 - **Python 3.13**
 - **Azure Subscription**
 - **Azure Functions Core Tools**
-- **Notion API Key** (Integration token)
 - **Google Gemini API Key**
+- **Notion Account** (with integration created)
 - **Azure Key Vault** (for secret management)
 
 ---
@@ -105,11 +105,26 @@ Create or update `local.settings.json`:
 ### 5. Configure Azure Key Vault
 Store secrets in Azure Key Vault:
 ```powershell
-az keyvault secret set --vault-name <keyvault-name> --name "NOTION-API-KEY" --value "<your-notion-key>"
+# Store Gemini API Key
 az keyvault secret set --vault-name <keyvault-name> --name "GOOGLE-API-KEY" --value "<your-gemini-key>"
+
+# Store Notion API Key
+az keyvault secret set --vault-name <keyvault-name> --name "NOTION-API-KEY" --value "<your-notion-key>"
 ```
 
-### 6. Run Locally
+### 6. Configure Notion Integration
+Set up Notion database and configuration:
+```powershell
+# Copy example configuration
+Copy-Item notion_config.example.json notion_config.json
+
+# Edit notion_config.json with your database ID
+# See NOTION_SETUP.md for detailed instructions
+```
+
+📖 **[Complete Notion Setup Guide](./NOTION_SETUP.md)**
+
+### 7. Run Locally
 ```powershell
 func host start
 ```
@@ -143,10 +158,37 @@ Invoke-RestMethod -Uri "http://localhost:7071/api/ytSummarizeToNotion" `
 ```json
 {
   "status": "success",
-  "notion_url": "https://notion.so/page-id",
-  "email_sent": true
+  "youtube_url": "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
+  "summary": {
+    "title": "Video Title",
+    "tags": ["tag1", "tag2"],
+    "url": "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
+    "brief_summary": "Overview of the video...",
+    "summary_bullets": ["Point 1", "Point 2"],
+    "tools_and_technologies": [{"tool": "Tool Name", "purpose": "Usage"}]
+  },
+  "notion_url": "https://notion.so/workspace/page-id",
+  "notion_success": true
 }
 ```
+
+---
+
+## Notion Integration
+
+The function automatically saves video summaries to a Notion database with structured formatting.
+
+📖 **[Complete Setup Guide](./NOTION_SETUP.md)**
+
+### Quick Start
+
+1. Create a Notion integration at [notion.so/my-integrations](https://www.notion.so/my-integrations)
+2. Store API key in Azure Key Vault as `NOTION-API-KEY`
+3. Create a database and grant integration access
+4. Copy database ID to `notion_config.json`
+5. Test with a video URL
+
+See [NOTION_SETUP.md](./NOTION_SETUP.md) for detailed step-by-step instructions.
 
 ---
 
@@ -161,7 +203,7 @@ ytVideoSummarizeAzureFunctions/
 ├── README.md                    # This file
 ├── services/
 │   ├── gemini_service.py        # AI summarization logic using Google Gemini
-│   ├── notion_service.py        # Notion API interactions (planned)
+│   ├── notion_service.py        # Notion API interactions
 │   └── email_service.py         # Email notification service (planned)
 ├── utils/
 │   ├── validators.py            # Input validation functions

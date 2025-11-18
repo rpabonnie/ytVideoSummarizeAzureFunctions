@@ -11,6 +11,7 @@ from utils.validators import validate_youtube_url, validate_request_body
 from utils.exceptions import (
     InvalidYouTubeUrlError,
     GeminiApiError,
+    NotionApiError,
     KeyVaultError
 )
 
@@ -164,15 +165,37 @@ def ytSummarizeToNotion(req: func.HttpRequest) -> func.HttpResponse:
                 mimetype="application/json"
             )
         
-        # Step 5: Return success response
-        # (Notion integration will be added in future phase)
+        # Step 5: Create Notion page
+        notion_url = None
+        notion_success = False
+        try:
+            logging.info("Creating Notion page with summary...")
+            notion_url = notion_service.create_page(summary)
+            notion_success = True
+            logging.info(f"Notion page created successfully: {notion_url}")
+        except NotionApiError as e:
+            logging.warning(f"Notion integration failed (non-fatal): {e.message}")
+            # Don't fail the entire request - summary is still valid
+        except KeyVaultError as e:
+            logging.warning(f"Notion Key Vault error (non-fatal): {e.message}")
+        except Exception as e:
+            logging.warning(f"Unexpected Notion error (non-fatal): {str(e)}")
+        
+        # Step 6: Return success response
+        response_data = {
+            "status": "success",
+            "youtube_url": sanitized_url,
+            "summary": summary,
+            "notion_url": notion_url,
+            "notion_success": notion_success
+        }
+        
+        # Add note if Notion integration failed
+        if not notion_success:
+            response_data["note"] = "Summary generated but Notion page creation failed. Check logs for details."
+        
         return func.HttpResponse(
-            json.dumps({
-                "status": "success",
-                "youtube_url": sanitized_url,
-                "summary": summary,
-                "note": "Video summarized successfully. Notion integration pending."
-            }, indent=2),
+            json.dumps(response_data, indent=2),
             status_code=200,
             mimetype="application/json"
         )
