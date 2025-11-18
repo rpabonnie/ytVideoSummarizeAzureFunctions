@@ -49,12 +49,17 @@ def _initialize_services():
         
         if from_email and to_email:
             try:
-                email_service = EmailService(from_email, to_email)
+                email_service = EmailService(key_vault_url, from_email, to_email)
                 logging.info("EmailService initialized successfully")
             except Exception as e:
-                logging.warning(f"Failed to initialize EmailService: {str(e)}. Email notifications disabled.")
+                logging.error(f"Failed to initialize EmailService: {str(e)}. Email notifications disabled.", exc_info=True)
         else:
-            logging.warning("Email configuration missing (EMAIL_FROM/EMAIL_TO). Email notifications disabled.")
+            missing_configs = []
+            if not from_email:
+                missing_configs.append("EMAIL_FROM")
+            if not to_email:
+                missing_configs.append("EMAIL_TO")
+            logging.warning(f"Email configuration missing: {', '.join(missing_configs)}. Email notifications disabled.")
         
         logging.info("Services initialized successfully")
 

@@ -6,44 +6,100 @@ This service encapsulates email notification logic including:
 - Integration with Azure Communication Services Email SDK
 - HTML email templates
 - Markdown attachment support for failure logs
+- Azure Key Vault integration for connection string retrieval
 """
 
 import logging
 import os
 import base64
-from typing import Dict, Any
+from typing import Optional
 from azure.communication.email import EmailClient
 from azure.identity import DefaultAzureCredential
+from azure.keyvault.secrets import SecretClient
+
+from utils.exceptions import KeyVaultError
 
 
 class EmailService:
     """Service for sending email notifications via Azure Communication Services Email."""
     
-    def __init__(self, from_email: str, to_email: str, connection_string: str | None = None):
+    # Module-level cache for API credentials (singleton pattern)
+    _credential: Optional[DefaultAzureCredential] = None
+    _secret_client: Optional[SecretClient] = None
+    _acs_connection_string: Optional[str] = None
+    
+    def __init__(self, key_vault_url: str, from_email: str, to_email: str):
         """
-        Initialize Email service with sender and recipient.
+        Initialize Email service with Key Vault and sender/recipient addresses.
         
         Args:
+            key_vault_url: Azure Key Vault URL (e.g., https://your-vault.vault.azure.net/)
             from_email: Sender email address (verified in ACS)
             to_email: Recipient email address
-            connection_string: ACS connection string (optional, uses env if not provided)
             
         Raises:
-            ValueError: If emails are empty or invalid format
+            ValueError: If parameters are empty or invalid format
+            KeyVaultError: If Key Vault access fails
         """
+        if not key_vault_url:
+            raise ValueError("key_vault_url cannot be empty")
         if not from_email or not to_email:
             raise ValueError("from_email and to_email cannot be empty")
         
+        self.key_vault_url = key_vault_url
         self.from_email = from_email
         self.to_email = to_email
         
-        # Initialize EmailClient with connection string
-        conn_str = connection_string or os.environ.get("ACS_CONNECTION_STRING")
-        if not conn_str:
-            raise ValueError("ACS_CONNECTION_STRING not configured")
-        
+        # Initialize EmailClient with connection string from Key Vault
+        conn_str = self._get_connection_string()
         self.email_client = EmailClient.from_connection_string(conn_str)
         logging.info(f"EmailService initialized: {from_email} -> {to_email}")
+    
+    def _get_connection_string(self) -> str:
+        """
+        Retrieve ACS connection string from Azure Key Vault (with caching).
+        
+        Returns:
+            str: Azure Communication Services connection string
+            
+        Raises:
+            KeyVaultError: If Key Vault access fails
+        """
+        # Return cached connection string if available
+        if EmailService._acs_connection_string:
+            return EmailService._acs_connection_string
+        
+        try:
+            # Initialize credential if not cached
+            if not EmailService._credential:
+                logging.info("Initializing DefaultAzureCredential for Key Vault access")
+                EmailService._credential = DefaultAzureCredential()
+            
+            # Initialize secret client if not cached
+            if not EmailService._secret_client:
+                logging.info(f"Connecting to Key Vault: {self.key_vault_url}")
+                EmailService._secret_client = SecretClient(
+                    vault_url=self.key_vault_url,
+                    credential=EmailService._credential
+                )
+            
+            # Retrieve and cache connection string
+            logging.info("Retrieving ACS-CONNECTION-STRING from Key Vault")
+            secret = EmailService._secret_client.get_secret("ACS-CONNECTION-STRING")
+            EmailService._acs_connection_string = secret.value
+            
+            if not EmailService._acs_connection_string:
+                raise KeyVaultError("Retrieved ACS connection string is empty or None")
+            
+            logging.info("Successfully retrieved ACS connection string from Key Vault")
+            return EmailService._acs_connection_string
+            
+        except KeyVaultError:
+            raise
+        except Exception as e:
+            error_msg = f"Failed to retrieve ACS connection string from Key Vault: {str(e)}"
+            logging.error(error_msg)
+            raise KeyVaultError(error_msg)
     
     def send_success_email(
         self, 
