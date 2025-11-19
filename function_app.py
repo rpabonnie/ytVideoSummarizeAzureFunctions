@@ -355,17 +355,21 @@ def ytSummarizeToNotion(req: func.HttpRequest) -> func.HttpResponse:
             })
         
         # Step 6: Return success response
-        response_data = {
-            "status": "success",
-            "youtube_url": sanitized_url,
-            "summary": summary,
-            "notion_url": notion_url,
-            "notion_success": notion_success
-        }
-        
-        # Add note if Notion integration failed
-        if not notion_success:
-            response_data["note"] = "Summary generated but Notion page creation failed. Check logs for details."
+        # Return simple success/failure message - Notion page contains the full summary
+        if notion_success and notion_url:
+            response_data = {
+                "status": "success",
+                "message": "Video summarized successfully",
+                "youtube_url": sanitized_url
+            }
+        else:
+            # Partial success - summary generated but Notion failed
+            response_data = {
+                "status": "partial_success",
+                "message": "Summary generated but Notion page creation failed",
+                "youtube_url": sanitized_url,
+                "note": "Check function logs for details"
+            }
             
             # Send failure email for partial success
             _send_failure_email(
