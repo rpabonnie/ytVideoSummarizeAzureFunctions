@@ -6,3 +6,5 @@ notion-client
 azure-identity
 azure-keyvault-secrets
 azure-communication-email>=1.0.0
+azure-appconfiguration>=1.5.0
+requests>=2.31.0

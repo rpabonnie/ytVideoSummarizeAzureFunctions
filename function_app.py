@@ -39,9 +39,12 @@ def _initialize_services():
         if not key_vault_url:
             raise ValueError("KEY_VAULT_URL environment variable not configured")
         
+        # Get optional App Configuration connection string
+        app_config_connection_string = os.environ.get("APP_CONFIG_CONNECTION_STRING")
+        
         logging.info("Initializing services...")
         gemini_service = GeminiService(key_vault_url)
-        notion_service = NotionService(key_vault_url)
+        notion_service = NotionService(key_vault_url, app_config_connection_string)
         
         # Initialize EmailService
         from_email = os.environ.get("EMAIL_FROM")
@@ -412,3 +415,224 @@ def ytSummarizeToNotion(req: func.HttpRequest) -> func.HttpResponse:
     finally:
         # Clean up log handler
         logger.removeHandler(log_handler)
+
+
+@app.route(route="ytSummarizeAsync", methods=["POST"])
+def ytSummarizeAsync(req: func.HttpRequest) -> func.HttpResponse:
+    """
+    Async webhook endpoint for YouTube video summarization (iOS Shortcuts compatible).
+    
+    This endpoint immediately returns a 202 Accepted response with a callback URL,
+    allowing the caller to avoid timeout issues. The actual processing happens
+    asynchronously, and results are sent to the provided callback URL.
+    
+    Designed to work with:
+    - Azure Logic Apps HTTP Webhook trigger
+    - iOS Shortcuts (prevents 2-minute timeout)
+    - Any webhook-compatible system
+    
+    Requires ADMIN authentication (x-functions-key header).
+    
+    Request Body:
+    {
+        "url": "https://www.youtube.com/watch?v=VIDEO_ID",
+        "callbackUrl": "https://logic-app-url.com/callback"  // Optional
+    }
+    
+    Returns:
+        202 Accepted: Processing started, callback will be called when complete
+        400 Bad Request: Invalid input
+        429 Too Many Requests: Rate limit exceeded
+    """
+    try:
+        logging.info('YouTube Summarize Async function triggered (webhook mode)')
+        
+        # Initialize services
+        _initialize_services()
+        
+        # Parse request body
+        try:
+            req_body = req.get_json()
+        except ValueError as e:
+            logging.error(f"Invalid JSON in request body: {str(e)}")
+            return func.HttpResponse(
+                json.dumps({"error": "Invalid JSON format"}),
+                status_code=400,
+                mimetype="application/json"
+            )
+        
+        # Validate request body
+        try:
+            validate_request_body(req_body)
+        except InvalidYouTubeUrlError as e:
+            logging.error(f"Request validation failed: {e.message}")
+            return func.HttpResponse(
+                json.dumps({"error": e.message}),
+                status_code=e.status_code,
+                mimetype="application/json"
+            )
+        
+        # Extract YouTube URL and callback URL
+        youtube_url = req_body.get('url', '')
+        callback_url = req_body.get('callbackUrl')
+        
+        # Validate YouTube URL
+        try:
+            sanitized_url = validate_youtube_url(youtube_url)
+            logging.info(f"Processing YouTube URL (async): {sanitized_url}")
+        except InvalidYouTubeUrlError as e:
+            logging.error(f"URL validation failed: {e.message}")
+            return func.HttpResponse(
+                json.dumps({"error": e.message}),
+                status_code=e.status_code,
+                mimetype="application/json"
+            )
+        
+        # Import asyncio and threading for background processing
+        import threading
+        import requests
+        
+        def process_video_async():
+            """Background thread to process video and call webhook."""
+            log_capture = LogCapture()
+            logger = logging.getLogger()
+            log_handler = LogCaptureHandler(log_capture)
+            log_handler.setLevel(logging.INFO)
+            logger.addHandler(log_handler)
+            
+            try:
+                logging.info(f"[Async] Starting video processing: {sanitized_url}")
+                
+                # Step 1: Summarize video
+                summary = gemini_service.summarize_video(sanitized_url)
+                logging.info("[Async] Video summarized successfully")
+                
+                # Step 2: Create Notion page
+                notion_url = None
+                notion_success = False
+                try:
+                    notion_url = notion_service.create_page(summary)
+                    notion_success = True
+                    logging.info(f"[Async] Notion page created: {notion_url}")
+                    
+                    # Send success email
+                    if email_service and notion_url:
+                        try:
+                            email_service.send_success_email(
+                                youtube_url=sanitized_url,
+                                notion_url=notion_url,
+                                summary=summary
+                            )
+                            logging.info("[Async] Success email sent")
+                        except Exception as e:
+                            logging.warning(f"[Async] Failed to send success email: {str(e)}")
+                    
+                except Exception as e:
+                    logging.warning(f"[Async] Notion integration failed: {str(e)}")
+                
+                # Step 3: Prepare callback response
+                callback_data = {
+                    "status": "success" if notion_success else "partial_success",
+                    "youtube_url": sanitized_url,
+                    "notion_url": notion_url,
+                    "message": "Video summarized and saved to Notion" if notion_success else "Video summarized but Notion page creation failed"
+                }
+                
+                # Step 4: Call webhook callback if provided
+                if callback_url:
+                    try:
+                        logging.info(f"[Async] Calling callback URL: {callback_url}")
+                        response = requests.post(
+                            callback_url,
+                            json=callback_data,
+                            headers={"Content-Type": "application/json"},
+                            timeout=30
+                        )
+                        response.raise_for_status()
+                        logging.info(f"[Async] Callback successful: {response.status_code}")
+                    except Exception as e:
+                        logging.error(f"[Async] Callback failed: {str(e)}")
+                        # Send failure email with callback error
+                        if email_service:
+                            try:
+                                email_service.send_failure_email(
+                                    youtube_url=sanitized_url,
+                                    error=f"Processing succeeded but callback failed: {str(e)}",
+                                    markdown_report=log_capture.generate_markdown_report() if log_capture else None,
+                                    request_body=req_body
+                                )
+                            except Exception as email_err:
+                                logging.error(f"[Async] Failed to send failure email: {str(email_err)}")
+                else:
+                    logging.info("[Async] No callback URL provided, processing complete")
+                
+            except Exception as e:
+                logging.error(f"[Async] Processing failed: {str(e)}", exc_info=True)
+                
+                # Send error to callback if provided
+                if callback_url:
+                    try:
+                        error_data = {
+                            "status": "error",
+                            "youtube_url": sanitized_url,
+                            "error": str(e),
+                            "message": "Video processing failed"
+                        }
+                        requests.post(
+                            callback_url,
+                            json=error_data,
+                            headers={"Content-Type": "application/json"},
+                            timeout=30
+                        )
+                    except Exception as callback_err:
+                        logging.error(f"[Async] Error callback failed: {str(callback_err)}")
+                
+                # Send failure email
+                if email_service:
+                    try:
+                        email_service.send_failure_email(
+                            youtube_url=sanitized_url,
+                            error=str(e),
+                            markdown_report=log_capture.generate_markdown_report() if log_capture else None,
+                            request_body=req_body
+                        )
+                    except Exception as email_err:
+                        logging.error(f"[Async] Failed to send failure email: {str(email_err)}")
+            
+            finally:
+                logger.removeHandler(log_handler)
+                logging.info("[Async] Background processing complete")
+        
+        # Start background processing
+        thread = threading.Thread(target=process_video_async, daemon=True)
+        thread.start()
+        
+        # Return immediate 202 Accepted response
+        response_data = {
+            "status": "accepted",
+            "message": "Video processing started. You will be notified when complete.",
+            "youtube_url": sanitized_url
+        }
+        
+        if callback_url:
+            response_data["callback_url"] = callback_url
+            response_data["note"] = "Results will be sent to the provided callback URL"
+        else:
+            response_data["note"] = "No callback URL provided. Check email for results."
+        
+        logging.info(f"[Async] Returning 202 Accepted, background processing started")
+        
+        return func.HttpResponse(
+            json.dumps(response_data, indent=2),
+            status_code=202,
+            mimetype="application/json"
+        )
+        
+    except Exception as e:
+        logging.error(f"Unexpected error in async endpoint: {str(e)}", exc_info=True)
+        return func.HttpResponse(
+            json.dumps({"error": "Internal server error. Check function logs for details."}),
+            status_code=500,
+            mimetype="application/json"
+        )
+
