@@ -5,3 +5,4 @@ google-genai
 notion-client
 azure-identity
 azure-keyvault-secrets
+azure-communication-email>=1.0.0
