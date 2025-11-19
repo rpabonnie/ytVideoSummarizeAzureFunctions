@@ -55,6 +55,9 @@ graph TD
 - **🔐 Secure**: Secrets managed via Azure Key Vault
 - **☁️ Serverless**: Scales automatically with Azure Functions
 - **🔍 Comprehensive Logging**: Application Insights integration for monitoring
+- **⚙️ Centralized Configuration**: Azure App Configuration for easy settings management
+- **📱 iOS Shortcuts Compatible**: Async webhook endpoint prevents timeout issues
+- **🔄 Async Processing**: Background processing with webhook callbacks
 
 ---
 
@@ -123,7 +126,18 @@ Copy-Item notion_config.example.json notion_config.json
 
 📖 **[Complete Notion Setup Guide](./NOTION_SETUP.md)**
 
-### 7. Run Locally
+### 7. (Optional) Configure Azure App Configuration
+
+For centralized configuration management without redeployment:
+
+```powershell
+# See APP_CONFIG_SETUP.md for complete instructions
+# This allows you to update Notion settings without redeploying
+```
+
+📖 **[Azure App Configuration Setup Guide](./APP_CONFIG_SETUP.md)**
+
+### 8. Run Locally
 ```powershell
 func host start
 ```
@@ -132,12 +146,15 @@ func host start
 
 ## API Usage
 
-### Endpoint
+### Endpoint 1: Synchronous Processing
+
+**For:** API calls, testing, quick responses
+
 ```
 POST http://localhost:7071/api/ytSummarizeToNotion
 ```
 
-### Request Body
+#### Request Body
 ```json
 {
   "url": "https://www.youtube.com/watch?v=VIDEO_ID"
@@ -170,6 +187,83 @@ Invoke-RestMethod -Uri "http://localhost:7071/api/ytSummarizeToNotion" `
   "notion_success": true
 }
 ```
+
+---
+
+### Endpoint 2: Asynchronous Processing (Webhook)
+
+**For:** iOS Shortcuts, long-running videos, avoiding timeouts
+
+```
+POST http://localhost:7071/api/ytSummarizeAsync
+```
+
+#### Request Body
+```json
+{
+  "url": "https://www.youtube.com/watch?v=VIDEO_ID",
+  "callbackUrl": "https://your-webhook-url.com/callback"  // Optional
+}
+```
+
+#### Response (Immediate - 202 Accepted)
+```json
+{
+  "status": "accepted",
+  "message": "Video processing started. You will be notified when complete.",
+  "youtube_url": "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
+  "callback_url": "https://your-webhook-url.com/callback",
+  "note": "Results will be sent to the provided callback URL"
+}
+```
+
+#### Callback Response (When Complete)
+```json
+{
+  "status": "success",
+  "youtube_url": "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
+  "notion_url": "https://notion.so/workspace/page-id",
+  "message": "Video summarized and saved to Notion"
+}
+```
+
+📖 **[iOS Shortcuts & Logic Apps Setup Guide](./LOGIC_APPS_SETUP.md)**
+
+---
+
+## iOS Shortcuts Integration
+
+Eliminate timeout issues when summarizing videos from your iPhone:
+
+1. **Set up Azure Logic Apps** with HTTP Webhook trigger
+2. **Create iOS Shortcut** that calls the Logic App
+3. **Share from YouTube** app directly to the shortcut
+4. **Get email notification** when processing completes
+
+No more 2-minute timeout limits! Process videos of any length.
+
+📖 **[Complete Logic Apps Webhook Setup](./LOGIC_APPS_SETUP.md)**
+
+---
+
+## Configuration Management
+
+### Azure App Configuration (Recommended for Production)
+
+Update Notion settings without redeploying:
+
+```powershell
+# Update configuration
+az appconfig kv set `
+  --name <config-name> `
+  --key "notion_config" `
+  --value '<updated-json-config>' `
+  --yes
+
+# Changes take effect immediately on next function execution
+```
+
+📖 **[Azure App Configuration Setup Guide](./APP_CONFIG_SETUP.md)**
 
 ---
 

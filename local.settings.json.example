@@ -4,6 +4,7 @@
     "AzureWebJobsStorage": "UseDevelopmentStorage=true",
     "FUNCTIONS_WORKER_RUNTIME": "python",
     "KEY_VAULT_URL": "https://<your-keyvault-name>.vault.azure.net/",
+    "APP_CONFIG_CONNECTION_STRING": "<your-app-config-connection-string>",
     "ACS_CONNECTION_STRING": "<your-acs-connection-string>",
     "EMAIL_FROM": "DoNotReply@bdba1f9f-569d-42e9-b923-2e8469137770.azurecomm.net",
     "EMAIL_TO": "pabonnie@gmail.com"

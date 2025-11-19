@@ -3,6 +3,7 @@ Notion service for creating pages from video summaries.
 
 This service encapsulates Notion API interactions including:
 - Azure Key Vault integration for API key retrieval
+- Azure App Configuration for settings management
 - Page creation with structured content
 - Error handling and validation
 """
@@ -12,6 +13,7 @@ from typing import Optional
 from azure.identity import DefaultAzureCredential
 from azure.keyvault.secrets import SecretClient
 
+from services.config_service import ConfigService
 from utils.exceptions import NotionApiError, KeyVaultError
 
 
@@ -23,13 +25,15 @@ class NotionService:
     _secret_client: Optional[SecretClient] = None
     _notion_api_key: Optional[str] = None
     _client = None
+    _config_service: Optional[ConfigService] = None
     
-    def __init__(self, key_vault_url: str):
+    def __init__(self, key_vault_url: str, app_config_connection_string: str | None = None):
         """
-        Initialize Notion service with Key Vault URL.
+        Initialize Notion service with Key Vault URL and optional App Configuration.
         
         Args:
             key_vault_url: Azure Key Vault URL (e.g., https://your-vault.vault.azure.net/)
+            app_config_connection_string: Azure App Configuration connection string (optional)
             
         Raises:
             ValueError: If key_vault_url is empty or invalid
@@ -38,6 +42,11 @@ class NotionService:
             raise ValueError("key_vault_url cannot be empty")
         
         self.key_vault_url = key_vault_url
+        
+        # Initialize ConfigService
+        if NotionService._config_service is None:
+            NotionService._config_service = ConfigService(app_config_connection_string)
+        
         logging.info(f"NotionService initialized with Key Vault: {key_vault_url}")
     
     def _get_api_key(self) -> str:
@@ -104,40 +113,29 @@ class NotionService:
     
     def _load_config(self) -> dict:
         """
-        Load Notion configuration from notion_config.json.
+        Load Notion configuration from Azure App Configuration or local file.
+        
+        Uses ConfigService to load from:
+        1. Azure App Configuration (if configured)
+        2. Local notion_config.json file (fallback)
         
         Returns:
             dict: Configuration containing database_id and property_mapping
             
         Raises:
-            NotionApiError: If config file not found or database_id missing
+            NotionApiError: If config not found or database_id missing
         """
-        import json
-        from pathlib import Path
-        
-        config_path = Path(__file__).parent.parent / "notion_config.json"
-        
-        if not config_path.exists():
-            raise NotionApiError(
-                "notion_config.json not found. See NOTION_SETUP.md for setup instructions."
-            )
-        
         try:
-            with open(config_path, 'r', encoding='utf-8') as f:
-                config = json.load(f)
-        except json.JSONDecodeError as e:
-            raise NotionApiError(f"Invalid JSON in notion_config.json: {str(e)}")
+            if NotionService._config_service is None:
+                NotionService._config_service = ConfigService()
+            
+            config = NotionService._config_service.get_notion_config()
+            return config
+            
+        except ValueError as e:
+            raise NotionApiError(str(e))
         except Exception as e:
-            raise NotionApiError(f"Failed to load notion_config.json: {str(e)}")
-        
-        if not config.get('database_id') or config['database_id'] == "PASTE_YOUR_DATABASE_ID_HERE":
-            raise NotionApiError(
-                "database_id not configured in notion_config.json. "
-                "Please add your Notion database ID (see NOTION_SETUP.md)."
-            )
-        
-        logging.info(f"Loaded Notion config for database: {config.get('database_name', 'Unknown')}")
-        return config
+            raise NotionApiError(f"Failed to load Notion configuration: {str(e)}")
     
     def _truncate_tag(self, tag: str, max_length: int = 100) -> str:
         """
