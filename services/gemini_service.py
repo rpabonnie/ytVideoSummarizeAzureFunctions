@@ -131,7 +131,8 @@ class GeminiService:
         prompt = f"""
         Please analyze this attached YouTube video and provide a comprehensive summary in JSON format.
         Provide insights I can save on a second brain system in Notion. The Title should be the original video title from YouTube.
-        
+        If the native language of the video is in spanish, match the summary language to spanish, otherwise use english.
+
         Return your response as a JSON object with the following structure:
         {{
             "title": "The original title from YouTube",
