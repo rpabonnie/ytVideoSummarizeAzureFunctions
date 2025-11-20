@@ -273,22 +273,18 @@ POST http://localhost:7071/api/ytSummarizeAsync
 }
 ```
 
-📖 **[iOS Shortcuts & Logic Apps Setup Guide](./LOGIC_APPS_SETUP.md)**
-
 ---
 
 ## iOS Shortcuts Integration
 
-Eliminate timeout issues when summarizing videos from your iPhone:
+Send videos straight from the YouTube app (or anywhere in iOS) directly to the Azure Function:
 
-1. **Set up Azure Logic Apps** with HTTP Webhook trigger
-2. **Create iOS Shortcut** that calls the Logic App
-3. **Share from YouTube** app directly to the shortcut
-4. **Get email notification** when processing completes
+1. **Create a Shortcut** that accepts text or URLs from the Share Sheet
+2. **Add a `Get Contents of URL` action** targeting the function endpoint (e.g., `https://<function-app>.azurewebsites.net/api/ytSummarizeAsync?code=<function-key>`)
+3. **Set the method to POST** and the request body to `{"url": "${ShortcutInput}"}`
+4. **Optional:** add a follow-up notification that confirms the 202 Accepted response
 
-No more 2-minute timeout limits! Process videos of any length.
-
-📖 **[Complete Logic Apps Webhook Setup](./LOGIC_APPS_SETUP.md)**
+Because the function immediately returns `202 Accepted` and processes the video in the background, Shortcut executions complete well under iOS’s timeout limits. Email notifications (and optional Notion links) arrive once processing finishes—no Logic App required.
 
 ---
 
