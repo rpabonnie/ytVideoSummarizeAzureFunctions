@@ -2,6 +2,8 @@
 
 An **Azure Functions** application built with **Python** that automatically summarizes YouTube videos using AI and saves the summaries to Notion, with comprehensive email notifications for both success and failure events.
 
+# **NOTE:** This code is not maintained acteviely. For this reason if you want to use it, ensure you update all dependencies, and check for obsolete, depecrated functionality before running the code or deploying on Azure.
+
 ## Overview
 
 This serverless application processes YouTube videos by:
